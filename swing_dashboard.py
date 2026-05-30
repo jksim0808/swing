@@ -236,4 +236,25 @@ if not universe_df.empty:
             col_chart, col_summary = st.columns([3, 1])
             
             with col_summary:
-                st.info(f"**
+                st.info(f"**💡 {t_name} 요약**")
+                st.write(f"- **시가총액:** {int(t_marcap):,}억 원")
+                st.write(f"- **현재가:** {int(t_price):,}원")
+                st.write(f"- **목표가(전고점):** {int(t_target):,}원")
+                st.write(f"- **손절가(-3%):** {int(t_price * 0.97):,}원")
+                st.write(f"- **기대수익률:** +{t_yield:.1f}%")
+                st.write(f"- **뉴스 분위기:** {t_news}")
+            
+            with col_chart:
+                df_chart = charts_data[t_name]
+                fig = go.Figure(go.Candlestick(
+                    x=df_chart['날짜'], open=df_chart['시가'], high=df_chart['고가'], low=df_chart['저가'], close=df_chart['종가'],
+                    increasing_line_color='#ff4b4b', decreasing_line_color='#0068c9', name="일봉"
+                ))
+                fig.add_trace(go.Scatter(x=df_chart['날짜'], y=df_chart['MA5'], mode='lines', line=dict(color='#ff9900', width=1.5), name="5일선"))
+                fig.add_trace(go.Scatter(x=df_chart['날짜'], y=df_chart['MA20'], mode='lines', line=dict(color='#cc00ff', width=2.5), name="20일선(생명선)"))
+                fig.add_hline(y=t_target, line_dash="dot", line_color="red", annotation_text="1차 목표가 (전고점)", annotation_position="top right")
+                
+                fig.update_layout(height=450, template="plotly_dark", margin=dict(l=0, r=40, t=20, b=0), xaxis=dict(rangeslider=dict(visible=False), type='category'))
+                st.plotly_chart(fig, use_container_width=True)
+else:
+    st.error("데이터를 수집하지 못했습니다. 네이버 금융 연결 상태를 확인해주세요.")
