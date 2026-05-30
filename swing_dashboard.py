@@ -40,14 +40,17 @@ def get_krx_info():
 
 @st.cache_data(ttl=300)
 def get_naver_top_universe():
-    headers = {'User-Agent': 'Mozilla/5.0'}
+    # 여기서도 사람인 척 위장
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+    }
     krx_info = get_krx_info()
     df_list = []
     
     for sosok in [0, 1]:
         url = f"https://finance.naver.com/sise/sise_quant.naver?sosok={sosok}"
         try:
-            res = requests.get(url, headers=headers)
+            res = requests.get(url, headers=headers, timeout=5)
             res.encoding = 'euc-kr'
             dfs = pd.read_html(io.StringIO(res.text))
             df = dfs[1].dropna(how='all') 
@@ -74,24 +77,32 @@ def get_naver_top_universe():
     return full_df.sort_values(by='거래대금', ascending=False).head(100).reset_index(drop=True)
 
 # =============================================================================
-# 2. 증권사 목표가 및 뉴스 센티먼트 분석
+# 💡 [핵심 수정] 2. 증권사 목표가 및 뉴스 센티먼트 (차단 우회 강화)
 # =============================================================================
 def get_fundamentals_and_news(code):
-    headers = {'User-Agent': 'Mozilla/5.0'}
+    # 진짜 크롬 브라우저처럼 완벽하게 신분 위장 (헤더 강화)
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+        'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
+    }
+    
     target_price = "N/A"
     news_status = "☁️ 보통"
     
     try:
+        # 1. 목표가 추출 (timeout을 5초로 넉넉하게)
         url_main = f"https://finance.naver.com/item/main.naver?code={code}"
-        res_main = requests.get(url_main, headers=headers, timeout=2)
+        res_main = requests.get(url_main, headers=headers, timeout=5)
         soup_main = BeautifulSoup(res_main.text, 'html.parser')
         
         cns_eps = soup_main.select_one('#_step_bank_cns')
         if cns_eps:
             target_price = cns_eps.text.strip().replace(',', '')
         
+        # 2. 뉴스 추출
         url_news = f"https://finance.naver.com/item/news_news.naver?code={code}&page=1"
-        res_news = requests.get(url_news, headers=headers, timeout=2)
+        res_news = requests.get(url_news, headers=headers, timeout=5)
         soup_news = BeautifulSoup(res_news.content.decode('euc-kr', 'replace'), 'html.parser')
         
         titles = soup_news.select('.title a')
@@ -107,12 +118,15 @@ def get_fundamentals_and_news(code):
         if score >= 2: news_status = "🔥 호재 우세"
         elif score <= -2: news_status = "❄️ 악재 우세"
         else: news_status = "☁️ 특징 없음"
-    except: pass
+        
+    except Exception as e:
+        # 에러가 나도 프로그램이 멈추지 않도록 처리
+        pass
         
     return target_price, news_status
 
 # =============================================================================
-# 3. 일봉 분석 알고리즘 (💡 초대형주 예외 로직 추가)
+# 3. 일봉 분석 알고리즘 (초대형주 예외 로직)
 # =============================================================================
 def analyze_swing_probability(ticker, is_mega_cap=False, days=60):
     end_date = datetime.now(KST)
@@ -138,9 +152,8 @@ def analyze_swing_probability(ticker, is_mega_cap=False, days=60):
         score = 40 
         status = "▪️ 관망"
         
-        # 💡 [핵심 로직] 시가총액 10조 이상 초대형주는 기준을 대폭 완화!
-        surge_ratio = 1.03 if is_mega_cap else 1.05  # 초대형주는 3% 상승, 일반은 5% 상승
-        vol_ratio = 2.0 if is_mega_cap else 3.0      # 초대형주는 거래량 2배, 일반은 3배
+        surge_ratio = 1.03 if is_mega_cap else 1.05
+        vol_ratio = 2.0 if is_mega_cap else 3.0
         
         df['is_bull'] = (df['종가'] > df['시가'] * surge_ratio) & (df['거래량'] > df['Vol_MA5'].shift(1) * vol_ratio)
         recent_bull = df.iloc[-20:][df.iloc[-20:]['is_bull'] == True]
@@ -175,8 +188,6 @@ def get_fully_analyzed_data(universe_df):
     
     for i, row in universe_df.iterrows():
         code, name = row['종목코드'], row['종목명']
-        
-        # 시가총액을 억 단위로 환산하고 10조(100,000억) 이상인지 판별
         marcap_100m = int(row['시가총액'] / 100000000)
         is_mega_cap = marcap_100m >= 100000 
         
@@ -207,7 +218,7 @@ def get_fully_analyzed_data(universe_df):
 universe_df = get_naver_top_universe()
 
 if not universe_df.empty:
-    with st.spinner("🔄 우량주 필터링 및 차트 분석 중입니다. (약 15~20초 소요)"):
+    with st.spinner("🔄 우량주 필터링 및 네이버 금융 데이터 수집 중입니다. (약 15~20초 소요)"):
         results, charts_data = get_fully_analyzed_data(universe_df)
     
     if results:
