@@ -15,27 +15,20 @@ st.set_page_config(layout="wide", page_title="🎯 전천후 스윙 스캐너")
 st.title("🎯 우량주 스윙 타점 스캐너 (안전망 풀가동 🛡️)")
 st.markdown("차트 점수, **1차 목표가(전고점)**, **증권사 컨센서스**, **뉴스 호재**를 종합 분석합니다. \n\n*(※ 현재가 10,000원 이상 & 시가총액 1,000억 원 이상 우량/중형주 한정)*")
 
-KST = timezone(timedelta(hours=9))
+with st.expander("📖 AI 스캐너 상태값 선별 기준 및 매매 로직 (클릭하여 펼치기)", expanded=False):
+    st.markdown("""
+    이 스캐너는 **'최근 20일 이내에 의미 있는 대량 거래량을 동반한 장대양봉(세력 개입)'**이 있었는가를 가장 먼저 확인합니다.
+    * **일반 우량주:** 하루 상승률 **5%** 이상 & 거래량 평소 대비 **3배** 이상
+    * **👑 초대형주(시가총액 10조 이상):** 무거운 엉덩이를 감안하여 하루 상승률 **3%** 이상 & 거래량 평소 대비 **2배** 이상으로 예외 적용
 
-# =============================================================================
-# 💡 [핵심 수정] 텔레그램 봇 발송 함수 (상세 에러 출력)
-# =============================================================================
-def send_telegram_message(token, chat_id, message):
-    url = f"https://api.telegram.org/bot{token}/sendMessage"
-    payload = {
-        'chat_id': chat_id,
-        'text': message,
-        'parse_mode': 'HTML'
-    }
-    try:
-        response = requests.post(url, json=payload)
-        if response.status_code == 200:
-            return True, "성공"
-        else:
-            # 실패 시 텔레그램 서버가 보내온 상세 에러 메시지를 반환합니다.
-            return False, response.text 
-    except Exception as e:
-        return False, str(e)
+    * **🎯 S급 눌림목 (+최고점):** 세력 개입 흔적이 있으며, 주가가 20일선 근처(-2% ~ +5% 구간)로 조정을 받았고, **거래량이 평소의 60% 이하로 바싹 마른 상태**입니다. 매도세가 멈춘 가장 이상적인 스윙 진입 타점입니다.
+    * **🟡 지지선 근접:** 주가가 20일선 근처까지 내려왔지만, 아직 거래량이 충분히 줄어들지 않아 지지 여부 확인이 필요합니다.
+    * **🔥 급등 진행형:** 세력 개입 후 주가가 20일선 대비 10% 이상 치솟아 올라가고 있는 구간으로 신규 진입 시 고점에 물릴 위험이 큽니다.
+    * **📉 추세 이탈:** 주가가 20일선(생명선) 아래로 뚫고 내려간 단기 하락 추세입니다.
+    * **▪️ 관망:** 최근 의미 있는 상승(기준봉)이 없었거나, 시장의 소외를 받고 있는 상태입니다.
+    """)
+
+KST = timezone(timedelta(hours=9))
 
 # =============================================================================
 # 1. 데이터 수집 함수
@@ -119,9 +112,9 @@ def get_fundamentals_and_news(code):
     return target_price, news_status
 
 # =============================================================================
-# 3. 일봉 분석 알고리즘
+# 3. 일봉 분석 알고리즘 (💡 초대형주 예외 로직 추가)
 # =============================================================================
-def analyze_swing_probability(ticker, days=60):
+def analyze_swing_probability(ticker, is_mega_cap=False, days=60):
     end_date = datetime.now(KST)
     start_date = end_date - timedelta(days=days)
     try:
@@ -145,7 +138,11 @@ def analyze_swing_probability(ticker, days=60):
         score = 40 
         status = "▪️ 관망"
         
-        df['is_bull'] = (df['종가'] > df['시가'] * 1.05) & (df['거래량'] > df['Vol_MA5'].shift(1) * 3)
+        # 💡 [핵심 로직] 시가총액 10조 이상 초대형주는 기준을 대폭 완화!
+        surge_ratio = 1.03 if is_mega_cap else 1.05  # 초대형주는 3% 상승, 일반은 5% 상승
+        vol_ratio = 2.0 if is_mega_cap else 3.0      # 초대형주는 거래량 2배, 일반은 3배
+        
+        df['is_bull'] = (df['종가'] > df['시가'] * surge_ratio) & (df['거래량'] > df['Vol_MA5'].shift(1) * vol_ratio)
         recent_bull = df.iloc[-20:][df.iloc[-20:]['is_bull'] == True]
         
         if not recent_bull.empty:
@@ -178,11 +175,15 @@ def get_fully_analyzed_data(universe_df):
     
     for i, row in universe_df.iterrows():
         code, name = row['종목코드'], row['종목명']
-        score, status, analyzed_df, high_price, target_yield = analyze_swing_probability(code)
+        
+        # 시가총액을 억 단위로 환산하고 10조(100,000억) 이상인지 판별
+        marcap_100m = int(row['시가총액'] / 100000000)
+        is_mega_cap = marcap_100m >= 100000 
+        
+        score, status, analyzed_df, high_price, target_yield = analyze_swing_probability(code, is_mega_cap=is_mega_cap)
         
         if score > 0:
             analyst_target, news_status = get_fundamentals_and_news(code)
-            marcap_100m = int(row['시가총액'] / 100000000)
             
             results.append({
                 "상태": status,
@@ -201,15 +202,8 @@ def get_fully_analyzed_data(universe_df):
     return results, charts_data
 
 # =============================================================================
-# 4. 사이드바 (텔레그램 설정) 및 메인 화면
+# 4. 메인 화면 렌더링
 # =============================================================================
-st.sidebar.header("🔔 텔레그램 알림 설정")
-st.sidebar.markdown("S급 눌림목 종목을 스마트폰으로 전송합니다.")
-
-# 값을 입력한 뒤 반드시 엔터를 쳐야 함을 안내
-tg_token = st.sidebar.text_input("Bot Token (봇 토큰)", type="password", help="입력 후 반드시 Enter를 치세요.")
-tg_chat_id = st.sidebar.text_input("Chat ID (챗 아이디)", help="입력 후 반드시 Enter를 치세요.")
-
 universe_df = get_naver_top_universe()
 
 if not universe_df.empty:
@@ -218,30 +212,8 @@ if not universe_df.empty:
     
     if results:
         top_30_df = pd.DataFrame(results).sort_values(by="점수", ascending=False).head(30).reset_index(drop=True)
-        s_class_df = top_30_df[top_30_df['상태'] == '🎯 S급 눌림목']
-        
-        if st.sidebar.button("📲 지금 S급 종목 텔레그램으로 받기", use_container_width=True):
-            if not tg_token or not tg_chat_id:
-                st.sidebar.error("토큰과 챗 아이디를 먼저 입력해주세요.")
-            else:
-                if s_class_df.empty:
-                    msg = "📊 [AI 스윙 스캐너 리포트]\n\n현재 시장에 완벽한 'S급 눌림목' 조건에 부합하는 종목이 없습니다. 관망을 추천합니다."
-                else:
-                    msg = f"🎯 [S급 눌림목 발견!] ({datetime.now(KST).strftime('%H:%M')})\n\n"
-                    for idx, row in s_class_df.iterrows():
-                        msg += f"🔥 <b>{row['종목명']}</b>\n"
-                        msg += f"• 현재가: {int(row['현재가']):,}원\n"
-                        msg += f"• 목표가: {int(row['1차 목표가(전고점)']):,}원 (+{row['전고점 기대수익(%)']:.1f}%)\n"
-                        msg += f"• 뉴스분위기: {row['뉴스 온도계']}\n\n"
-                
-                # 💡 [핵심 수정] 실패 시 에러 내용을 출력하도록 변경
-                success, response_msg = send_telegram_message(tg_token, tg_chat_id, msg)
-                if success:
-                    st.sidebar.success("✅ 텔레그램 전송 성공! 폰을 확인하세요.")
-                else:
-                    st.sidebar.error(f"❌ 전송 실패! 아래 에러를 확인하세요:\n\n{response_msg}")
-
         display_df = top_30_df.copy()
+        
         def format_target(x):
             if x == "N/A" or not str(x).isdigit(): return "정보 없음"
             return f"{int(x):,} 원"
