@@ -15,12 +15,11 @@ st.title("🎯 실전 스윙 스캐너 & 모의투자 시스템")
 
 KST = timezone(timedelta(hours=9))
 
-# 가상 매매(모의투자) 기록을 저장할 세션 스테이트 초기화
 if 'portfolio' not in st.session_state:
     st.session_state.portfolio = pd.DataFrame(columns=['매수일자', '종목명', '매수가', '1차 목표가(전고점)', '손절가(-3%)', '기대수익률(%)'])
 
 # =============================================================================
-# 1. 데이터 수집 함수 (한국거래소 & 네이버 금융)
+# 1. 데이터 수집 함수
 # =============================================================================
 @st.cache_data(ttl=3600*12)
 def get_krx_codes():
@@ -47,7 +46,6 @@ def get_naver_top_universe():
     if not df_list: return pd.DataFrame()
         
     full_df = pd.concat(df_list, ignore_index=True)
-    
     for col in ['현재가', '거래량', '거래대금']:
         full_df[col] = pd.to_numeric(full_df[col].astype(str).str.replace(',', ''), errors='coerce')
     full_df['등락률'] = pd.to_numeric(full_df['등락률'].astype(str).str.replace('%', ''), errors='coerce')
@@ -56,17 +54,15 @@ def get_naver_top_universe():
     full_df = full_df[~full_df['종목명'].str.contains(pattern, case=False, regex=True)]
     full_df = full_df[full_df['현재가'] >= 1000]
     full_df['종목코드'] = full_df['종목명'].map(code_map)
-    full_df = full_df.dropna(subset=['종목코드']).sort_values(by='거래대금', ascending=False).head(100).reset_index(drop=True)
     
-    return full_df
+    return full_df.dropna(subset=['종목코드']).sort_values(by='거래대금', ascending=False).head(100).reset_index(drop=True)
 
 # =============================================================================
-# 2. 일봉 분석 & 전고점(목표가) 탐색 알고리즘
+# 2. 일봉 분석 알고리즘
 # =============================================================================
 def analyze_swing_probability(ticker, days=60):
     end_date = datetime.now(KST)
     start_date = end_date - timedelta(days=days)
-    
     try:
         df = fdr.DataReader(ticker, start_date.strftime('%Y-%m-%d'), end_date.strftime('%Y-%m-%d'))
         if len(df) < 20: return 0, "데이터 부족", pd.DataFrame(), 0, 0
@@ -82,7 +78,6 @@ def analyze_swing_probability(ticker, days=60):
         current_vol = df['거래량'].iloc[-1]
         ma20 = df['MA20'].iloc[-1]
         
-        # 🎯 [추가된 로직] 최근 60일 전고점(최고가) 및 목표 수익률 계산
         highest_price = df['고가'].max()
         target_yield = ((highest_price - current_price) / current_price) * 100
         
@@ -109,47 +104,50 @@ def analyze_swing_probability(ticker, days=60):
                 status = "📉 추세 이탈"
                 
         return min(99, score), status, df, highest_price, target_yield
+    except:
+        return 0, "에러", pd.DataFrame(), 0, 0
+
+# =============================================================================
+# ✨ [핵심 최적화] 100개 종목 전체 분석을 캐싱(저장)하는 함수
+# 이 함수는 5분(300초)에 딱 한 번만 실행되며, 클릭 시에는 즉시 저장된 결과를 뱉어냅니다!
+# =============================================================================
+@st.cache_data(ttl=300, show_spinner=False)
+def get_fully_analyzed_data(universe_df):
+    results = []
+    charts_data = {}
+    
+    for i, row in universe_df.iterrows():
+        code, name = row['종목코드'], row['종목명']
+        score, status, analyzed_df, high_price, target_yield = analyze_swing_probability(code)
         
-    except Exception:
-        return 0, "분석 에러", pd.DataFrame(), 0, 0
+        if score > 0:
+            results.append({
+                "상태": status,
+                "점수": score,
+                "종목명": name,
+                "현재가": row['현재가'],
+                "1차 목표가(전고점)": high_price,
+                "전고점까지 남은 수익(%)": target_yield,
+                "종목코드": code
+            })
+            charts_data[name] = analyzed_df
+            
+    return results, charts_data
 
 # =============================================================================
 # 3. 탭(Tab) 기반 UI 구성
 # =============================================================================
 tab1, tab2 = st.tabs(["🔍 1. 실시간 스윙 스캐너", "📝 2. 나의 모의투자 일지"])
 
-# -----------------------------------------------------------------------------
-# [TAB 1] 스윙 스캐너
-# -----------------------------------------------------------------------------
 with tab1:
-    st.markdown("현재 시장을 주도하는 종목 중 **안전한 눌림목 확률**이 높은 30개를 추출하고 **목표가(전고점)**를 계산합니다.")
+    st.markdown("현재 시장을 주도하는 종목 중 **안전한 눌림목 확률**이 높은 30개를 추출합니다. (클릭 시 딜레이 없음 ⚡)")
     
     universe_df = get_naver_top_universe()
     
     if not universe_df.empty:
-        my_bar = st.progress(0, text="상위 100개 종목 정밀 분석 중...")
-        results, charts_data = [], {}
-        total_stocks = len(universe_df)
-        
-        for i, row in universe_df.iterrows():
-            code, name = row['종목코드'], row['종목명']
-            score, status, analyzed_df, high_price, target_yield = analyze_swing_probability(code)
-            
-            if score > 0:
-                results.append({
-                    "상태": status,
-                    "점수": score,
-                    "종목명": name,
-                    "현재가": row['현재가'],
-                    "1차 목표가(전고점)": high_price,
-                    "전고점까지 남은 수익(%)": target_yield,
-                    "종목코드": code
-                })
-                charts_data[name] = analyzed_df
-                
-            my_bar.progress((i + 1) / total_stocks, text=f"분석 중: {name} ({i+1}/{total_stocks})")
-            
-        my_bar.empty()
+        # 최초 접속 시에만 로딩 스피너 작동
+        with st.spinner("🔄 최초 1회 분석 중입니다. (10~15초 소요, 이후 클릭 시에는 즉시 반응합니다)"):
+            results, charts_data = get_fully_analyzed_data(universe_df)
         
         if results:
             top_30_df = pd.DataFrame(results).sort_values(by="점수", ascending=False).head(30).reset_index(drop=True)
@@ -165,7 +163,7 @@ with tab1:
                 use_container_width=True, selection_mode="single-row", on_select="rerun", hide_index=True
             )
 
-            # 종목 선택 시 액션
+            # 종목 선택 시 액션 (이제 클릭해도 다시 100개를 분석하지 않고 즉시 차트를 띄웁니다)
             if hasattr(selected_rows, 'selection') and len(selected_rows.selection.rows) > 0:
                 idx = selected_rows.selection.rows[0]
                 t_name = top_30_df.iloc[idx]['종목명']
@@ -182,21 +180,16 @@ with tab1:
                     st.write(f"- **1차 목표가:** {int(t_target):,}원")
                     st.write(f"- **손절가(-3%):** {int(t_price * 0.97):,}원")
                     st.write(f"- **기대수익률:** +{t_yield:.1f}%")
-                    
                     st.markdown("<br>", unsafe_allow_html=True)
                     
-                    # 🛒 모의투자 매수 버튼
                     if st.button(f"🛒 '{t_name}' 가상 매수하기", use_container_width=True, type="primary"):
                         new_trade = pd.DataFrame([{
                             '매수일자': datetime.now(KST).strftime('%Y-%m-%d %H:%M'),
-                            '종목명': t_name,
-                            '매수가': int(t_price),
-                            '1차 목표가(전고점)': int(t_target),
-                            '손절가(-3%)': int(t_price * 0.97),
-                            '기대수익률(%)': round(t_yield, 1)
+                            '종목명': t_name, '매수가': int(t_price), '1차 목표가(전고점)': int(t_target),
+                            '손절가(-3%)': int(t_price * 0.97), '기대수익률(%)': round(t_yield, 1)
                         }])
                         st.session_state.portfolio = pd.concat([st.session_state.portfolio, new_trade], ignore_index=True)
-                        st.toast(f"✅ {t_name} 모의 매수 완료! '나의 모의투자 일지' 탭을 확인하세요.", icon="📈")
+                        st.toast(f"✅ {t_name} 모의 매수 완료!", icon="📈")
                 
                 with col_chart:
                     df_chart = charts_data[t_name]
@@ -206,24 +199,18 @@ with tab1:
                     ))
                     fig.add_trace(go.Scatter(x=df_chart['날짜'], y=df_chart['MA5'], mode='lines', line=dict(color='#ff9900', width=1.5), name="5일선"))
                     fig.add_trace(go.Scatter(x=df_chart['날짜'], y=df_chart['MA20'], mode='lines', line=dict(color='#cc00ff', width=2.5), name="20일선(생명선)"))
-                    # 전고점 목표가 가이드라인 (점선)
                     fig.add_hline(y=t_target, line_dash="dot", line_color="red", annotation_text="1차 목표가 (전고점)", annotation_position="top right")
                     
                     fig.update_layout(height=450, template="plotly_dark", margin=dict(l=0, r=40, t=20, b=0), xaxis=dict(rangeslider=dict(visible=False), type='category'))
                     st.plotly_chart(fig, use_container_width=True)
 
-# -----------------------------------------------------------------------------
-# [TAB 2] 모의투자 일지
-# -----------------------------------------------------------------------------
 with tab2:
     st.subheader("📝 나의 모의투자 포트폴리오")
     st.markdown("스캐너에서 가상 매수한 종목들이 기록됩니다. (※ 새로고침하면 기록이 초기화됩니다.)")
-    
     if st.session_state.portfolio.empty:
         st.info("아직 가상 매수한 종목이 없습니다. 스캐너 탭에서 종목을 골라 '가상 매수하기' 버튼을 눌러보세요!")
     else:
         st.dataframe(st.session_state.portfolio, use_container_width=True, hide_index=True)
-        
         if st.button("🗑️ 전체 기록 초기화"):
             st.session_state.portfolio = pd.DataFrame(columns=['매수일자', '종목명', '매수가', '1차 목표가(전고점)', '손절가(-3%)', '기대수익률(%)'])
             st.rerun()
