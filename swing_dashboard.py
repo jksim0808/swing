@@ -15,14 +15,25 @@ st.set_page_config(layout="wide", page_title="🎯 전천후 스윙 스캐너")
 st.title("🎯 우량주 스윙 타점 스캐너 (안전망 풀가동 🛡️)")
 st.markdown("차트 점수, **1차 목표가(전고점)**, **증권사 컨센서스**, **뉴스 호재**를 종합 분석합니다. \n\n*(※ 현재가 10,000원 이상 & 시가총액 1,000억 원 이상 우량/중형주 한정)*")
 
+# 💡 [추가됨] 프로그램 상단 로직 설명 가이드
+with st.expander("📖 AI 스캐너 상태값 선별 기준 및 매매 로직 (클릭하여 펼치기)", expanded=False):
+    st.markdown("""
+    이 스캐너는 기본적으로 **'최근 20일 이내에 평소 대비 3배 이상의 대량 거래량을 동반하며 5% 이상 상승한 장대양봉(세력 개입)'**이 있었는가를 가장 먼저 확인합니다. 이후 주가와 20일 이동평균선(생명선)의 위치에 따라 상태를 분류합니다.
+
+    * **🎯 S급 눌림목 (+최고점):** 세력 개입 흔적이 있으며, 주가가 20일선 근처(-2% ~ +5% 구간)로 예쁘게 조정을 받았고, **동시에 거래량이 평소의 60% 이하로 바싹 마른 상태**입니다. 매도세가 멈춘 가장 이상적인 스윙 진입 타점입니다.
+    * **🟡 지지선 근접:** 주가가 20일선 근처까지 내려왔지만, 아직 거래량이 충분히 줄어들지 않아 누군가 계속 팔고 있는 상태입니다. 20일선을 깨는지 지지하는지 확인이 필요합니다.
+    * **🔥 급등 진행형:** 세력 개입 후 주가가 20일선 대비 10% 이상 아득히 높게 치솟아 올라가고 있는 불꽃놀이 구간입니다. 보유자의 영역이며, 신규 진입 시 고점에 물릴(추격 매수) 위험이 큽니다.
+    * **📉 추세 이탈:** 주가가 20일선(생명선) 아래로 뚫고 내려간 상태입니다. 단기 하락 추세로 전환되었으므로 스윙 매매 대상에서 제외합니다.
+    * **▪️ 관망 (기본값):** 최근 대량 거래량을 동반한 의미 있는 상승(기준봉)이 없었거나, 시장의 소외를 받고 있어 당장 매매할 메리트가 없는 상태입니다.
+    """)
+
 KST = timezone(timedelta(hours=9))
 
 # =============================================================================
-# 1. 데이터 수집 함수 (시가총액 데이터 추가)
+# 1. 데이터 수집 함수
 # =============================================================================
 @st.cache_data(ttl=3600*12)
 def get_krx_info():
-    """한국거래소 종목코드와 시가총액 데이터를 가져옵니다."""
     df = fdr.StockListing('KRX')
     return df[['Name', 'Code', 'Marcap']].set_index('Name')
 
@@ -53,15 +64,12 @@ def get_naver_top_universe():
     pattern = '|'.join(['KODEX', 'TIGER', 'KBSTAR', 'ACE', 'ARIRANG', 'HANARO', 'KOSEF', 'SOL', 'TIMEFOLIO', 'WOORI', '스팩', 'ETN', '제\d+호', '우$'])
     full_df = full_df[~full_df['종목명'].str.contains(pattern, case=False, regex=True)]
     
-    # 💡 1차 안전망: 10,000원 이상 종목만 필터링
     full_df = full_df[full_df['현재가'] >= 10000]
     
-    # 종목코드와 시가총액 매핑
     full_df['종목코드'] = full_df['종목명'].map(krx_info['Code'])
     full_df['시가총액'] = full_df['종목명'].map(krx_info['Marcap'])
     full_df = full_df.dropna(subset=['종목코드', '시가총액'])
     
-    # 💡 2차 안전망: 시가총액 1,000억 원 이상 필터링 (Marcap은 원 단위이므로 100,000,000,000)
     full_df = full_df[full_df['시가총액'] >= 100000000000]
     
     return full_df.sort_values(by='거래대금', ascending=False).head(100).reset_index(drop=True)
@@ -169,14 +177,13 @@ def get_fully_analyzed_data(universe_df):
         if score > 0:
             analyst_target, news_status = get_fundamentals_and_news(code)
             
-            # 시가총액을 '억 원' 단위로 변환하여 저장
             marcap_100m = int(row['시가총액'] / 100000000)
             
             results.append({
                 "상태": status,
                 "점수": score, 
                 "종목명": name,
-                "시가총액(억)": marcap_100m, # 추가된 데이터
+                "시가총액(억)": marcap_100m, 
                 "현재가": row['현재가'], 
                 "1차 목표가(전고점)": high_price, 
                 "전고점 기대수익(%)": target_yield, 
@@ -207,7 +214,6 @@ if not universe_df.empty:
             return f"{int(x):,} 원"
         display_df['증권사 목표가'] = display_df['증권사 목표가'].apply(format_target)
         
-        # 시가총액 칼럼이 추가된 메인 테이블 렌더링
         selected_rows = st.dataframe(
             display_df[['상태', '점수', '종목명', '시가총액(억)', '현재가', '1차 목표가(전고점)', '전고점 기대수익(%)', '증권사 목표가', '뉴스 온도계']],
             use_container_width=True, 
