@@ -15,19 +15,35 @@ st.set_page_config(layout="wide", page_title="🎯 전천후 스윙 스캐너")
 st.title("🎯 우량주 스윙 타점 스캐너 (안전망 풀가동 🛡️)")
 st.markdown("차트 점수, **1차 목표가(전고점)**, **증권사 컨센서스**, **뉴스 호재**를 종합 분석합니다. \n\n*(※ 현재가 10,000원 이상 & 시가총액 1,000억 원 이상 우량/중형주 한정)*")
 
-# 💡 [추가됨] 프로그램 상단 로직 설명 가이드
 with st.expander("📖 AI 스캐너 상태값 선별 기준 및 매매 로직 (클릭하여 펼치기)", expanded=False):
     st.markdown("""
-    이 스캐너는 기본적으로 **'최근 20일 이내에 평소 대비 3배 이상의 대량 거래량을 동반하며 5% 이상 상승한 장대양봉(세력 개입)'**이 있었는가를 가장 먼저 확인합니다. 이후 주가와 20일 이동평균선(생명선)의 위치에 따라 상태를 분류합니다.
+    이 스캐너는 기본적으로 **'최근 20일 이내에 평소 대비 3배 이상의 대량 거래량을 동반하며 5% 이상 상승한 장대양봉(세력 개입)'**이 있었는가를 가장 먼저 확인합니다.
 
-    * **🎯 S급 눌림목 (+최고점):** 세력 개입 흔적이 있으며, 주가가 20일선 근처(-2% ~ +5% 구간)로 예쁘게 조정을 받았고, **동시에 거래량이 평소의 60% 이하로 바싹 마른 상태**입니다. 매도세가 멈춘 가장 이상적인 스윙 진입 타점입니다.
-    * **🟡 지지선 근접:** 주가가 20일선 근처까지 내려왔지만, 아직 거래량이 충분히 줄어들지 않아 누군가 계속 팔고 있는 상태입니다. 20일선을 깨는지 지지하는지 확인이 필요합니다.
-    * **🔥 급등 진행형:** 세력 개입 후 주가가 20일선 대비 10% 이상 아득히 높게 치솟아 올라가고 있는 불꽃놀이 구간입니다. 보유자의 영역이며, 신규 진입 시 고점에 물릴(추격 매수) 위험이 큽니다.
-    * **📉 추세 이탈:** 주가가 20일선(생명선) 아래로 뚫고 내려간 상태입니다. 단기 하락 추세로 전환되었으므로 스윙 매매 대상에서 제외합니다.
-    * **▪️ 관망 (기본값):** 최근 대량 거래량을 동반한 의미 있는 상승(기준봉)이 없었거나, 시장의 소외를 받고 있어 당장 매매할 메리트가 없는 상태입니다.
+    * **🎯 S급 눌림목 (+최고점):** 세력 개입 흔적이 있으며, 주가가 20일선 근처(-2% ~ +5% 구간)로 조정을 받았고, **거래량이 평소의 60% 이하로 바싹 마른 상태**입니다. 매도세가 멈춘 가장 이상적인 스윙 진입 타점입니다.
+    * **🟡 지지선 근접:** 주가가 20일선 근처까지 내려왔지만, 아직 거래량이 충분히 줄어들지 않아 지지 여부 확인이 필요합니다.
+    * **🔥 급등 진행형:** 세력 개입 후 주가가 20일선 대비 10% 이상 치솟아 올라가고 있는 구간으로 신규 진입 시 고점에 물릴 위험이 큽니다.
+    * **📉 추세 이탈:** 주가가 20일선(생명선) 아래로 뚫고 내려간 단기 하락 추세입니다.
+    * **▪️ 관망:** 최근 의미 있는 상승(기준봉)이 없었거나, 시장의 소외를 받고 있는 상태입니다.
     """)
 
 KST = timezone(timedelta(hours=9))
+
+# =============================================================================
+# [텔레그램 봇 발송 함수]
+# =============================================================================
+def send_telegram_message(token, chat_id, message):
+    """텔레그램 봇 API를 통해 메시지를 전송합니다."""
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    payload = {
+        'chat_id': chat_id,
+        'text': message,
+        'parse_mode': 'HTML'
+    }
+    try:
+        response = requests.post(url, json=payload)
+        return response.status_code == 200
+    except Exception as e:
+        return False
 
 # =============================================================================
 # 1. 데이터 수집 함수
@@ -65,11 +81,9 @@ def get_naver_top_universe():
     full_df = full_df[~full_df['종목명'].str.contains(pattern, case=False, regex=True)]
     
     full_df = full_df[full_df['현재가'] >= 10000]
-    
     full_df['종목코드'] = full_df['종목명'].map(krx_info['Code'])
     full_df['시가총액'] = full_df['종목명'].map(krx_info['Marcap'])
     full_df = full_df.dropna(subset=['종목코드', '시가총액'])
-    
     full_df = full_df[full_df['시가총액'] >= 100000000000]
     
     return full_df.sort_values(by='거래대금', ascending=False).head(100).reset_index(drop=True)
@@ -163,7 +177,7 @@ def analyze_swing_probability(ticker, days=60):
         return 0, "에러", pd.DataFrame(), 0, 0
 
 # =============================================================================
-# ✨ 통합 데이터 캐싱 (종목 분석 + 펀더멘털/뉴스 동시 수집)
+# ✨ 통합 데이터 캐싱
 # =============================================================================
 @st.cache_data(ttl=300, show_spinner=False)
 def get_fully_analyzed_data(universe_df):
@@ -176,7 +190,6 @@ def get_fully_analyzed_data(universe_df):
         
         if score > 0:
             analyst_target, news_status = get_fundamentals_and_news(code)
-            
             marcap_100m = int(row['시가총액'] / 100000000)
             
             results.append({
@@ -196,17 +209,46 @@ def get_fully_analyzed_data(universe_df):
     return results, charts_data
 
 # =============================================================================
-# 4. 메인 화면 렌더링
+# 4. 사이드바 (텔레그램 설정) 및 메인 화면
 # =============================================================================
+st.sidebar.header("🔔 텔레그램 알림 설정")
+st.sidebar.markdown("S급 눌림목 종목을 스마트폰으로 전송합니다.")
+tg_token = st.sidebar.text_input("Bot Token (봇 토큰)", type="password")
+tg_chat_id = st.sidebar.text_input("Chat ID (챗 아이디)")
+
 universe_df = get_naver_top_universe()
 
 if not universe_df.empty:
-    with st.spinner("🔄 우량주 필터링 및 차트 분석 중입니다. (약 15~20초 소요, 이후 즉시 반응)"):
+    with st.spinner("🔄 우량주 필터링 및 차트 분석 중입니다. (약 15~20초 소요)"):
         results, charts_data = get_fully_analyzed_data(universe_df)
     
     if results:
         top_30_df = pd.DataFrame(results).sort_values(by="점수", ascending=False).head(30).reset_index(drop=True)
         
+        # S급 눌림목 종목만 따로 추출 (텔레그램 전송용)
+        s_class_df = top_30_df[top_30_df['상태'] == '🎯 S급 눌림목']
+        
+        # 텔레그램 수동 발송 버튼
+        if st.sidebar.button("📲 지금 S급 종목 텔레그램으로 받기", use_container_width=True):
+            if not tg_token or not tg_chat_id:
+                st.sidebar.error("토큰과 챗 아이디를 먼저 입력해주세요.")
+            else:
+                if s_class_df.empty:
+                    msg = "📊 [AI 스윙 스캐너 리포트]\n\n현재 시장에 완벽한 'S급 눌림목' 조건에 부합하는 종목이 없습니다. 관망을 추천합니다."
+                else:
+                    msg = f"🎯 [S급 눌림목 발견!] ({datetime.now(KST).strftime('%H:%M')})\n\n"
+                    for idx, row in s_class_df.iterrows():
+                        msg += f"🔥 <b>{row['종목명']}</b>\n"
+                        msg += f"• 현재가: {int(row['현재가']):,}원\n"
+                        msg += f"• 목표가: {int(row['1차 목표가(전고점)']):,}원 (+{row['전고점 기대수익(%)']:.1f}%)\n"
+                        msg += f"• 뉴스분위기: {row['뉴스 온도계']}\n\n"
+                
+                success = send_telegram_message(tg_token, tg_chat_id, msg)
+                if success:
+                    st.sidebar.success("✅ 텔레그램 전송 성공!")
+                else:
+                    st.sidebar.error("❌ 전송 실패. 토큰과 아이디를 확인하세요.")
+
         display_df = top_30_df.copy()
         
         def format_target(x):
