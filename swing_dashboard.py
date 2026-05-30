@@ -6,12 +6,14 @@ import requests
 import io
 from datetime import datetime, timedelta, timezone
 import FinanceDataReader as fdr
+from bs4 import BeautifulSoup
 
 # =============================================================================
 # [설정] 기본 셋팅 및 모의투자 세션 초기화
 # =============================================================================
-st.set_page_config(layout="wide", page_title="🎯 전천후 스윙 스캐너 & 모의투자")
-st.title("🎯 실전 스윙 스캐너 & 모의투자 시스템")
+st.set_page_config(layout="wide", page_title="🎯 전천후 스윙 스캐너 (프로버전)")
+st.title("🎯 전천후 스윙 스캐너 & 뉴스 온도계")
+st.markdown("차트/수급 점수와 함께 **증권사 목표가** 및 **실시간 뉴스 분위기(호재/악재)**를 종합 분석합니다.")
 
 KST = timezone(timedelta(hours=9))
 
@@ -58,7 +60,52 @@ def get_naver_top_universe():
     return full_df.dropna(subset=['종목코드']).sort_values(by='거래대금', ascending=False).head(100).reset_index(drop=True)
 
 # =============================================================================
-# 2. 일봉 분석 알고리즘
+# 2. 증권사 목표가 및 뉴스 센티먼트(호재/악재) 분석 함수
+# =============================================================================
+def get_fundamentals_and_news(code):
+    headers = {'User-Agent': 'Mozilla/5.0'}
+    target_price = "N/A"
+    news_status = "☁️ 보통"
+    
+    try:
+        # 네이버 금융 메인 페이지 (증권사 목표가 추출)
+        url_main = f"https://finance.naver.com/item/main.naver?code={code}"
+        res_main = requests.get(url_main, headers=headers, timeout=2)
+        soup_main = BeautifulSoup(res_main.text, 'html.parser')
+        
+        # '목표주가'를 담고 있는 em 태그 검색
+        cns_eps = soup_main.select_one('#_step_bank_cns')
+        if cns_eps:
+            target_price = cns_eps.text.strip().replace(',', '')
+        
+        # 네이버 금융 뉴스 페이지 (뉴스 제목 추출)
+        url_news = f"https://finance.naver.com/item/news_news.naver?code={code}&page=1"
+        res_news = requests.get(url_news, headers=headers, timeout=2)
+        soup_news = BeautifulSoup(res_news.content.decode('euc-kr', 'replace'), 'html.parser')
+        
+        titles = soup_news.select('.title a')
+        
+        # 호재/악재 판별용 키워드 사전
+        pos_words = ['상승', '급등', '수주', '흑자', '돌파', '호실적', '성장', '최대', 'MOU', '계약', '기대', '강세', '수혜']
+        neg_words = ['하락', '급락', '적자', '우려', '매도', '악재', '위기', '감소', '부진', '소송', '폭락', '약세', '쇼크']
+        
+        score = 0
+        for title in titles[:10]: # 최신 뉴스 10개만 검사
+            text = title.text
+            if any(word in text for word in pos_words): score += 1
+            if any(word in text for word in neg_words): score -= 1
+            
+        if score >= 2: news_status = "🔥 호재 우세"
+        elif score <= -2: news_status = "❄️ 악재 우세"
+        else: news_status = "☁️ 특징 없음"
+        
+    except:
+        pass
+        
+    return target_price, news_status
+
+# =============================================================================
+# 3. 일봉 분석 알고리즘
 # =============================================================================
 def analyze_swing_probability(ticker, days=60):
     end_date = datetime.now(KST)
@@ -108,8 +155,7 @@ def analyze_swing_probability(ticker, days=60):
         return 0, "에러", pd.DataFrame(), 0, 0
 
 # =============================================================================
-# ✨ [핵심 최적화] 100개 종목 전체 분석을 캐싱(저장)하는 함수
-# 이 함수는 5분(300초)에 딱 한 번만 실행되며, 클릭 시에는 즉시 저장된 결과를 뱉어냅니다!
+# ✨ 통합 데이터 캐싱 (종목 분석 + 펀더멘털/뉴스 동시 수집)
 # =============================================================================
 @st.cache_data(ttl=300, show_spinner=False)
 def get_fully_analyzed_data(universe_df):
@@ -121,13 +167,18 @@ def get_fully_analyzed_data(universe_df):
         score, status, analyzed_df, high_price, target_yield = analyze_swing_probability(code)
         
         if score > 0:
+            # 뉴스 및 증권사 목표가 크롤링 추가
+            analyst_target, news_status = get_fundamentals_and_news(code)
+            
             results.append({
                 "상태": status,
                 "점수": score,
                 "종목명": name,
                 "현재가": row['현재가'],
+                "증권사 목표가": analyst_target,
+                "뉴스 온도계": news_status,
                 "1차 목표가(전고점)": high_price,
-                "전고점까지 남은 수익(%)": target_yield,
+                "전고점 기대수익(%)": target_yield,
                 "종목코드": code
             })
             charts_data[name] = analyzed_df
@@ -135,18 +186,17 @@ def get_fully_analyzed_data(universe_df):
     return results, charts_data
 
 # =============================================================================
-# 3. 탭(Tab) 기반 UI 구성
+# 4. 탭(Tab) 기반 UI 구성
 # =============================================================================
 tab1, tab2 = st.tabs(["🔍 1. 실시간 스윙 스캐너", "📝 2. 나의 모의투자 일지"])
 
 with tab1:
-    st.markdown("현재 시장을 주도하는 종목 중 **안전한 눌림목 확률**이 높은 30개를 추출합니다. (클릭 시 딜레이 없음 ⚡)")
+    st.markdown("차트 점수, **증권사 컨센서스(목표가)**, **실시간 뉴스 호재 분석**을 종합하여 보여줍니다.")
     
     universe_df = get_naver_top_universe()
     
     if not universe_df.empty:
-        # 최초 접속 시에만 로딩 스피너 작동
-        with st.spinner("🔄 최초 1회 분석 중입니다. (10~15초 소요, 이후 클릭 시에는 즉시 반응합니다)"):
+        with st.spinner("🔄 데이터 및 최신 뉴스 텍스트를 수집, 분석 중입니다. (약 15~20초 소요)"):
             results, charts_data = get_fully_analyzed_data(universe_df)
         
         if results:
@@ -155,31 +205,40 @@ with tab1:
             display_df = top_30_df.copy()
             display_df['점수'] = display_df['점수'].apply(lambda x: f"🔥 {x} 점")
             display_df['현재가'] = display_df['현재가'].apply(lambda x: f"{int(x):,} 원")
-            display_df['1차 목표가(전고점)'] = display_df['1차 목표가(전고점)'].apply(lambda x: f"{int(x):,} 원")
-            display_df['전고점까지 남은 수익(%)'] = display_df['전고점까지 남은 수익(%)'].apply(lambda x: f"🎯 +{x:.1f}% 기대")
             
+            # 증권사 목표가 포맷팅
+            def format_target(x):
+                if x == "N/A" or not x.isdigit(): return "정보 없음"
+                return f"{int(x):,} 원"
+            display_df['증권사 목표가'] = display_df['증권사 목표가'].apply(format_target)
+            
+            display_df['1차 목표가(전고점)'] = display_df['1차 목표가(전고점)'].apply(lambda x: f"{int(x):,} 원")
+            display_df['전고점 기대수익(%)'] = display_df['전고점 기대수익(%)'].apply(lambda x: f"🎯 +{x:.1f}%")
+            
+            # 테이블 컬럼 순서 및 구성 변경
             selected_rows = st.dataframe(
-                display_df[['상태', '점수', '종목명', '현재가', '1차 목표가(전고점)', '전고점까지 남은 수익(%)']],
+                display_df[['상태', '점수', '종목명', '현재가', '증권사 목표가', '뉴스 온도계', '전고점 기대수익(%)']],
                 use_container_width=True, selection_mode="single-row", on_select="rerun", hide_index=True
             )
 
-            # 종목 선택 시 액션 (이제 클릭해도 다시 100개를 분석하지 않고 즉시 차트를 띄웁니다)
+            # 종목 선택 시 액션
             if hasattr(selected_rows, 'selection') and len(selected_rows.selection.rows) > 0:
                 idx = selected_rows.selection.rows[0]
                 t_name = top_30_df.iloc[idx]['종목명']
                 t_price = top_30_df.iloc[idx]['현재가']
                 t_target = top_30_df.iloc[idx]['1차 목표가(전고점)']
-                t_yield = top_30_df.iloc[idx]['전고점까지 남은 수익(%)']
+                t_yield = top_30_df.iloc[idx]['전고점 기대수익(%)']
+                t_news = top_30_df.iloc[idx]['뉴스 온도계']
                 
                 st.markdown("---")
                 col_chart, col_buy = st.columns([3, 1])
                 
                 with col_buy:
-                    st.success(f"**{t_name}** 분석 결과")
+                    st.success(f"**{t_name}** 요약 리포트")
                     st.write(f"- **현재가:** {int(t_price):,}원")
-                    st.write(f"- **1차 목표가:** {int(t_target):,}원")
-                    st.write(f"- **손절가(-3%):** {int(t_price * 0.97):,}원")
+                    st.write(f"- **전고점 목표가:** {int(t_target):,}원")
                     st.write(f"- **기대수익률:** +{t_yield:.1f}%")
+                    st.write(f"- **뉴스 반응:** {t_news}")
                     st.markdown("<br>", unsafe_allow_html=True)
                     
                     if st.button(f"🛒 '{t_name}' 가상 매수하기", use_container_width=True, type="primary"):
