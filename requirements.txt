@@ -1,0 +1,9 @@
+streamlit
+pandas
+numpy
+plotly
+finance-datareader
+requests
+beautifulsoup4
+joblib
+scikit-learn
