@@ -12,23 +12,24 @@ from bs4 import BeautifulSoup
 # [설정] 기본 셋팅
 # =============================================================================
 st.set_page_config(layout="wide", page_title="🎯 전천후 스윙 스캐너")
-st.title("🎯 우량주 스윙 타점 스캐너 (1만 원 이상)")
-st.markdown("차트 점수, **1차 목표가(전고점)**, **증권사 컨센서스**, **실시간 뉴스 호재 분석**을 한눈에 종합 분석합니다. (10,000원 이상 안정적 종목 한정)")
+st.title("🎯 우량주 스윙 타점 스캐너 (안전망 풀가동 🛡️)")
+st.markdown("차트 점수, **1차 목표가(전고점)**, **증권사 컨센서스**, **뉴스 호재**를 종합 분석합니다. \n\n*(※ 현재가 10,000원 이상 & 시가총액 1,000억 원 이상 우량/중형주 한정)*")
 
 KST = timezone(timedelta(hours=9))
 
 # =============================================================================
-# 1. 데이터 수집 함수
+# 1. 데이터 수집 함수 (시가총액 데이터 추가)
 # =============================================================================
 @st.cache_data(ttl=3600*12)
-def get_krx_codes():
+def get_krx_info():
+    """한국거래소 종목코드와 시가총액 데이터를 가져옵니다."""
     df = fdr.StockListing('KRX')
-    return df.set_index('Name')['Code'].to_dict()
+    return df[['Name', 'Code', 'Marcap']].set_index('Name')
 
 @st.cache_data(ttl=300)
 def get_naver_top_universe():
     headers = {'User-Agent': 'Mozilla/5.0'}
-    code_map = get_krx_codes()
+    krx_info = get_krx_info()
     df_list = []
     
     for sosok in [0, 1]:
@@ -52,12 +53,18 @@ def get_naver_top_universe():
     pattern = '|'.join(['KODEX', 'TIGER', 'KBSTAR', 'ACE', 'ARIRANG', 'HANARO', 'KOSEF', 'SOL', 'TIMEFOLIO', 'WOORI', '스팩', 'ETN', '제\d+호', '우$'])
     full_df = full_df[~full_df['종목명'].str.contains(pattern, case=False, regex=True)]
     
-    # 10,000원 이상 종목만 필터링
+    # 💡 1차 안전망: 10,000원 이상 종목만 필터링
     full_df = full_df[full_df['현재가'] >= 10000]
     
-    full_df['종목코드'] = full_df['종목명'].map(code_map)
+    # 종목코드와 시가총액 매핑
+    full_df['종목코드'] = full_df['종목명'].map(krx_info['Code'])
+    full_df['시가총액'] = full_df['종목명'].map(krx_info['Marcap'])
+    full_df = full_df.dropna(subset=['종목코드', '시가총액'])
     
-    return full_df.dropna(subset=['종목코드']).sort_values(by='거래대금', ascending=False).head(100).reset_index(drop=True)
+    # 💡 2차 안전망: 시가총액 1,000억 원 이상 필터링 (Marcap은 원 단위이므로 100,000,000,000)
+    full_df = full_df[full_df['시가총액'] >= 100000000000]
+    
+    return full_df.sort_values(by='거래대금', ascending=False).head(100).reset_index(drop=True)
 
 # =============================================================================
 # 2. 증권사 목표가 및 뉴스 센티먼트 분석
@@ -162,13 +169,17 @@ def get_fully_analyzed_data(universe_df):
         if score > 0:
             analyst_target, news_status = get_fundamentals_and_news(code)
             
+            # 시가총액을 '억 원' 단위로 변환하여 저장
+            marcap_100m = int(row['시가총액'] / 100000000)
+            
             results.append({
                 "상태": status,
-                "점수": score, # 순수 숫자 유지
+                "점수": score, 
                 "종목명": name,
-                "현재가": row['현재가'], # 순수 숫자 유지
-                "1차 목표가(전고점)": high_price, # 순수 숫자 유지
-                "전고점 기대수익(%)": target_yield, # 순수 숫자 유지
+                "시가총액(억)": marcap_100m, # 추가된 데이터
+                "현재가": row['현재가'], 
+                "1차 목표가(전고점)": high_price, 
+                "전고점 기대수익(%)": target_yield, 
                 "증권사 목표가": analyst_target,
                 "뉴스 온도계": news_status,
                 "종목코드": code
@@ -183,7 +194,7 @@ def get_fully_analyzed_data(universe_df):
 universe_df = get_naver_top_universe()
 
 if not universe_df.empty:
-    with st.spinner("🔄 데이터를 수집하고 차트를 분석 중입니다. (약 15~20초 소요, 이후 즉시 반응)"):
+    with st.spinner("🔄 우량주 필터링 및 차트 분석 중입니다. (약 15~20초 소요, 이후 즉시 반응)"):
         results, charts_data = get_fully_analyzed_data(universe_df)
     
     if results:
@@ -191,21 +202,21 @@ if not universe_df.empty:
         
         display_df = top_30_df.copy()
         
-        # 증권사 목표가는 "N/A"(문자)가 섞일 수 있으므로 포맷팅 처리
         def format_target(x):
             if x == "N/A" or not str(x).isdigit(): return "정보 없음"
             return f"{int(x):,} 원"
         display_df['증권사 목표가'] = display_df['증권사 목표가'].apply(format_target)
         
-        # 💡 [핵심 해결] 데이터를 문자열로 바꾸지 않고, column_config를 통해 '보이는 모습'만 꾸며줍니다.
+        # 시가총액 칼럼이 추가된 메인 테이블 렌더링
         selected_rows = st.dataframe(
-            display_df[['상태', '점수', '종목명', '현재가', '1차 목표가(전고점)', '전고점 기대수익(%)', '증권사 목표가', '뉴스 온도계']],
+            display_df[['상태', '점수', '종목명', '시가총액(억)', '현재가', '1차 목표가(전고점)', '전고점 기대수익(%)', '증권사 목표가', '뉴스 온도계']],
             use_container_width=True, 
             selection_mode="single-row", 
             on_select="rerun", 
             hide_index=True,
             column_config={
                 "점수": st.column_config.NumberColumn("🔥 점수", format="%d 점"),
+                "시가총액(억)": st.column_config.NumberColumn("🏢 시가총액", format="%d 억"),
                 "현재가": st.column_config.NumberColumn("현재가", format="%d 원"),
                 "1차 목표가(전고점)": st.column_config.NumberColumn("1차 목표가", format="%d 원"),
                 "전고점 기대수익(%)": st.column_config.NumberColumn("🎯 기대수익(%)", format="%.1f %%")
@@ -219,29 +230,10 @@ if not universe_df.empty:
             t_target = top_30_df.iloc[idx]['1차 목표가(전고점)']
             t_yield = top_30_df.iloc[idx]['전고점 기대수익(%)']
             t_news = top_30_df.iloc[idx]['뉴스 온도계']
+            t_marcap = top_30_df.iloc[idx]['시가총액(억)']
             
             st.markdown("---")
             col_chart, col_summary = st.columns([3, 1])
             
             with col_summary:
-                st.info(f"**💡 {t_name} 요약**")
-                st.write(f"- **현재가:** {int(t_price):,}원")
-                st.write(f"- **목표가(전고점):** {int(t_target):,}원")
-                st.write(f"- **손절가(-3%):** {int(t_price * 0.97):,}원")
-                st.write(f"- **기대수익률:** +{t_yield:.1f}%")
-                st.write(f"- **뉴스 분위기:** {t_news}")
-            
-            with col_chart:
-                df_chart = charts_data[t_name]
-                fig = go.Figure(go.Candlestick(
-                    x=df_chart['날짜'], open=df_chart['시가'], high=df_chart['고가'], low=df_chart['저가'], close=df_chart['종가'],
-                    increasing_line_color='#ff4b4b', decreasing_line_color='#0068c9', name="일봉"
-                ))
-                fig.add_trace(go.Scatter(x=df_chart['날짜'], y=df_chart['MA5'], mode='lines', line=dict(color='#ff9900', width=1.5), name="5일선"))
-                fig.add_trace(go.Scatter(x=df_chart['날짜'], y=df_chart['MA20'], mode='lines', line=dict(color='#cc00ff', width=2.5), name="20일선(생명선)"))
-                fig.add_hline(y=t_target, line_dash="dot", line_color="red", annotation_text="1차 목표가 (전고점)", annotation_position="top right")
-                
-                fig.update_layout(height=450, template="plotly_dark", margin=dict(l=0, r=40, t=20, b=0), xaxis=dict(rangeslider=dict(visible=False), type='category'))
-                st.plotly_chart(fig, use_container_width=True)
-else:
-    st.error("데이터를 수집하지 못했습니다. 네이버 금융 연결 상태를 확인해주세요.")
+                st.info(f"**
