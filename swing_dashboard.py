@@ -40,7 +40,6 @@ def get_krx_info():
 
 @st.cache_data(ttl=300)
 def get_naver_top_universe():
-    # 여기서도 사람인 척 위장
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
     }
@@ -77,10 +76,9 @@ def get_naver_top_universe():
     return full_df.sort_values(by='거래대금', ascending=False).head(100).reset_index(drop=True)
 
 # =============================================================================
-# 💡 [핵심 수정] 2. 증권사 목표가 및 뉴스 센티먼트 (차단 우회 강화)
+# 2. 증권사 목표가 및 뉴스 센티먼트 분석
 # =============================================================================
 def get_fundamentals_and_news(code):
-    # 진짜 크롬 브라우저처럼 완벽하게 신분 위장 (헤더 강화)
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
@@ -91,7 +89,6 @@ def get_fundamentals_and_news(code):
     news_status = "☁️ 보통"
     
     try:
-        # 1. 목표가 추출 (timeout을 5초로 넉넉하게)
         url_main = f"https://finance.naver.com/item/main.naver?code={code}"
         res_main = requests.get(url_main, headers=headers, timeout=5)
         soup_main = BeautifulSoup(res_main.text, 'html.parser')
@@ -100,7 +97,6 @@ def get_fundamentals_and_news(code):
         if cns_eps:
             target_price = cns_eps.text.strip().replace(',', '')
         
-        # 2. 뉴스 추출
         url_news = f"https://finance.naver.com/item/news_news.naver?code={code}&page=1"
         res_news = requests.get(url_news, headers=headers, timeout=5)
         soup_news = BeautifulSoup(res_news.content.decode('euc-kr', 'replace'), 'html.parser')
@@ -120,7 +116,6 @@ def get_fundamentals_and_news(code):
         else: news_status = "☁️ 특징 없음"
         
     except Exception as e:
-        # 에러가 나도 프로그램이 멈추지 않도록 처리
         pass
         
     return target_price, news_status
@@ -264,12 +259,16 @@ if not universe_df.empty:
             
             with col_chart:
                 df_chart = charts_data[t_name]
+                
+                # 💡 [핵심 수정] 날짜 데이터를 안전하게 문자열로 변환하여 차트 증발 현상 방지
+                date_str = pd.to_datetime(df_chart['날짜']).dt.strftime('%Y-%m-%d')
+                
                 fig = go.Figure(go.Candlestick(
-                    x=df_chart['날짜'], open=df_chart['시가'], high=df_chart['고가'], low=df_chart['저가'], close=df_chart['종가'],
+                    x=date_str, open=df_chart['시가'], high=df_chart['고가'], low=df_chart['저가'], close=df_chart['종가'],
                     increasing_line_color='#ff4b4b', decreasing_line_color='#0068c9', name="일봉"
                 ))
-                fig.add_trace(go.Scatter(x=df_chart['날짜'], y=df_chart['MA5'], mode='lines', line=dict(color='#ff9900', width=1.5), name="5일선"))
-                fig.add_trace(go.Scatter(x=df_chart['날짜'], y=df_chart['MA20'], mode='lines', line=dict(color='#cc00ff', width=2.5), name="20일선(생명선)"))
+                fig.add_trace(go.Scatter(x=date_str, y=df_chart['MA5'], mode='lines', line=dict(color='#ff9900', width=1.5), name="5일선"))
+                fig.add_trace(go.Scatter(x=date_str, y=df_chart['MA20'], mode='lines', line=dict(color='#cc00ff', width=2.5), name="20일선(생명선)"))
                 fig.add_hline(y=t_target, line_dash="dot", line_color="red", annotation_text="1차 목표가 (전고점)", annotation_position="top right")
                 
                 fig.update_layout(height=450, template="plotly_dark", margin=dict(l=0, r=40, t=20, b=0), xaxis=dict(rangeslider=dict(visible=False), type='category'))
