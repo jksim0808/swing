@@ -12,8 +12,8 @@ from bs4 import BeautifulSoup
 # [설정] 기본 셋팅
 # =============================================================================
 st.set_page_config(layout="wide", page_title="🎯 전천후 스윙 스캐너")
-st.title("🎯 전천후 스윙 타점 스캐너 (통합 뷰)")
-st.markdown("차트 점수, **1차 목표가(전고점)**, **증권사 컨센서스**, **실시간 뉴스 호재 분석**을 한눈에 종합 분석합니다.")
+st.title("🎯 우량주 스윙 타점 스캐너 (1만 원 이상)")
+st.markdown("차트 점수, **1차 목표가(전고점)**, **증권사 컨센서스**, **실시간 뉴스 호재 분석**을 한눈에 종합 분석합니다. (10,000원 이상 안정적 종목 한정)")
 
 KST = timezone(timedelta(hours=9))
 
@@ -51,7 +51,10 @@ def get_naver_top_universe():
     
     pattern = '|'.join(['KODEX', 'TIGER', 'KBSTAR', 'ACE', 'ARIRANG', 'HANARO', 'KOSEF', 'SOL', 'TIMEFOLIO', 'WOORI', '스팩', 'ETN', '제\d+호', '우$'])
     full_df = full_df[~full_df['종목명'].str.contains(pattern, case=False, regex=True)]
-    full_df = full_df[full_df['현재가'] >= 1000]
+    
+    # 💡 선생님의 인사이트 반영: 10,000원 이상 종목만 필터링!
+    full_df = full_df[full_df['현재가'] >= 10000]
+    
     full_df['종목코드'] = full_df['종목명'].map(code_map)
     
     return full_df.dropna(subset=['종목코드']).sort_values(by='거래대금', ascending=False).head(100).reset_index(drop=True)
@@ -197,13 +200,11 @@ if not universe_df.empty:
             return f"{int(x):,} 원"
         display_df['증권사 목표가'] = display_df['증권사 목표가'].apply(format_target)
         
-        # 💡 메인 테이블에 1차 목표가 추가!
         selected_rows = st.dataframe(
             display_df[['상태', '점수', '종목명', '현재가', '1차 목표가(전고점)', '전고점 기대수익(%)', '증권사 목표가', '뉴스 온도계']],
             use_container_width=True, selection_mode="single-row", on_select="rerun", hide_index=True
         )
 
-        # 종목 선택 시 차트 출력
         if hasattr(selected_rows, 'selection') and len(selected_rows.selection.rows) > 0:
             idx = selected_rows.selection.rows[0]
             t_name = top_30_df.iloc[idx]['종목명']
