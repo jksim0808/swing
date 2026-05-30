@@ -52,7 +52,7 @@ def get_naver_top_universe():
     pattern = '|'.join(['KODEX', 'TIGER', 'KBSTAR', 'ACE', 'ARIRANG', 'HANARO', 'KOSEF', 'SOL', 'TIMEFOLIO', 'WOORI', '스팩', 'ETN', '제\d+호', '우$'])
     full_df = full_df[~full_df['종목명'].str.contains(pattern, case=False, regex=True)]
     
-    # 💡 선생님의 인사이트 반영: 10,000원 이상 종목만 필터링!
+    # 10,000원 이상 종목만 필터링
     full_df = full_df[full_df['현재가'] >= 10000]
     
     full_df['종목코드'] = full_df['종목명'].map(code_map)
@@ -60,7 +60,7 @@ def get_naver_top_universe():
     return full_df.dropna(subset=['종목코드']).sort_values(by='거래대금', ascending=False).head(100).reset_index(drop=True)
 
 # =============================================================================
-# 2. 증권사 목표가 및 뉴스 센티먼트(호재/악재) 분석 함수
+# 2. 증권사 목표가 및 뉴스 센티먼트 분석
 # =============================================================================
 def get_fundamentals_and_news(code):
     headers = {'User-Agent': 'Mozilla/5.0'}
@@ -164,11 +164,11 @@ def get_fully_analyzed_data(universe_df):
             
             results.append({
                 "상태": status,
-                "점수": score,
+                "점수": score, # 순수 숫자 유지
                 "종목명": name,
-                "현재가": row['현재가'],
-                "1차 목표가(전고점)": high_price,
-                "전고점 기대수익(%)": target_yield,
+                "현재가": row['현재가'], # 순수 숫자 유지
+                "1차 목표가(전고점)": high_price, # 순수 숫자 유지
+                "전고점 기대수익(%)": target_yield, # 순수 숫자 유지
                 "증권사 목표가": analyst_target,
                 "뉴스 온도계": news_status,
                 "종목코드": code
@@ -178,7 +178,7 @@ def get_fully_analyzed_data(universe_df):
     return results, charts_data
 
 # =============================================================================
-# 4. 메인 화면 렌더링 (단일 뷰 통합)
+# 4. 메인 화면 렌더링
 # =============================================================================
 universe_df = get_naver_top_universe()
 
@@ -190,19 +190,26 @@ if not universe_df.empty:
         top_30_df = pd.DataFrame(results).sort_values(by="점수", ascending=False).head(30).reset_index(drop=True)
         
         display_df = top_30_df.copy()
-        display_df['점수'] = display_df['점수'].apply(lambda x: f"🔥 {x} 점")
-        display_df['현재가'] = display_df['현재가'].apply(lambda x: f"{int(x):,} 원")
-        display_df['1차 목표가(전고점)'] = display_df['1차 목표가(전고점)'].apply(lambda x: f"{int(x):,} 원")
-        display_df['전고점 기대수익(%)'] = display_df['전고점 기대수익(%)'].apply(lambda x: f"🎯 +{x:.1f}%")
         
+        # 증권사 목표가는 "N/A"(문자)가 섞일 수 있으므로 포맷팅 처리
         def format_target(x):
-            if x == "N/A" or not x.isdigit(): return "정보 없음"
+            if x == "N/A" or not str(x).isdigit(): return "정보 없음"
             return f"{int(x):,} 원"
         display_df['증권사 목표가'] = display_df['증권사 목표가'].apply(format_target)
         
+        # 💡 [핵심 해결] 데이터를 문자열로 바꾸지 않고, column_config를 통해 '보이는 모습'만 꾸며줍니다.
         selected_rows = st.dataframe(
             display_df[['상태', '점수', '종목명', '현재가', '1차 목표가(전고점)', '전고점 기대수익(%)', '증권사 목표가', '뉴스 온도계']],
-            use_container_width=True, selection_mode="single-row", on_select="rerun", hide_index=True
+            use_container_width=True, 
+            selection_mode="single-row", 
+            on_select="rerun", 
+            hide_index=True,
+            column_config={
+                "점수": st.column_config.NumberColumn("🔥 점수", format="%d 점"),
+                "현재가": st.column_config.NumberColumn("현재가", format="%d 원"),
+                "1차 목표가(전고점)": st.column_config.NumberColumn("1차 목표가", format="%d 원"),
+                "전고점 기대수익(%)": st.column_config.NumberColumn("🎯 기대수익(%)", format="%.1f %%")
+            }
         )
 
         if hasattr(selected_rows, 'selection') and len(selected_rows.selection.rows) > 0:
