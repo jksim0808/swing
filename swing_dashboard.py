@@ -208,4 +208,64 @@ if not universe_df.empty:
         # [화면 상단] 어그로 타이틀 & 1등 종목 정보 (HTML 적용)
         # ---------------------------------------------------------
         st.markdown(f'<div class="shorts-title">🚨 AI 포착 오늘의 S급 스윙 🚨</div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="shorts-subtitle">거래대금 상
+        st.markdown(f'<div class="shorts-subtitle">거래대금 상위 100종목 알고리즘 분석 완료</div>', unsafe_allow_html=True)
+        
+        st.markdown(f'<div style="text-align: center;"><span class="status-badge">{t_status}</span></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="stock-name">{t_name}</div>', unsafe_allow_html=True)
+        
+        st.markdown(f'<div class="yield-text">목표 수익률 +{t_yield:.1f}%</div>', unsafe_allow_html=True)
+        
+        st.markdown(f'''
+        <div class="price-info">
+            ▪️ <b>현재가:</b> {t_price:,} 원<br>
+            ▪️ <b>1차 목표가:</b> {t_target:,} 원<br>
+            ▪️ <b>뉴스 분위기:</b> {t_news}
+        </div>
+        ''', unsafe_allow_html=True)
+
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        # ---------------------------------------------------------
+        # [화면 중단] 모바일에 꽉 차는 거대한 차트
+        # ---------------------------------------------------------
+        date_str = pd.to_datetime(df_chart['날짜']).dt.strftime('%m-%d')
+        fig = go.Figure()
+        
+        # 캔들스틱 굵기 증가
+        fig.add_trace(go.Candlestick(
+            x=date_str, open=df_chart['시가'], high=df_chart['고가'], low=df_chart['저가'], close=df_chart['종가'],
+            increasing_line_color='#ff4b4b', decreasing_line_color='#0068c9', name="일봉"
+        ))
+        
+        # 이평선 굵기 증가
+        fig.add_trace(go.Scatter(x=date_str, y=df_chart['MA5'], mode='lines', line=dict(color='#ff9900', width=4), name="5일선"))
+        fig.add_trace(go.Scatter(x=date_str, y=df_chart['MA20'], mode='lines', line=dict(color='#cc00ff', width=6), name="20일선"))
+        
+        # 목표가 점선 라인 굵기 및 폰트 증가
+        fig.add_hline(y=t_target, line_dash="dash", line_color="red", line_width=3, 
+                      annotation_text="목표가", annotation_font_size=30, annotation_font_color="red")
+        
+        fig.update_layout(
+            height=600,  # 모바일 화면을 꽉 채우기 위해 세로 길이 대폭 증가
+            template="plotly_dark",
+            margin=dict(l=10, r=60, t=10, b=10),
+            xaxis=dict(rangeslider=dict(visible=False), type='category', tickfont=dict(size=20)),
+            yaxis=dict(tickfont=dict(size=25)), # y축 가격 폰트 키우기
+            showlegend=False # 모바일 화면이 좁으므로 레전드 숨김
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+        # ---------------------------------------------------------
+        # [화면 하단] 🎙️ Playwright가 긁어갈 AI 대본 (TTS용)
+        # ---------------------------------------------------------
+        # 이 텍스트는 화면 하단에 예쁜 박스 형태로 표시되며, 동시에 Playwright가 음성 합성을 위해 추출해 갑니다.
+        script_content = f"""
+        AI가 포착한 오늘의 핫한 스윙 종목, 바로 {t_name} 입니다. 
+        현재 차트 상태는 {t_status} 이며, 최근 발생한 의미 있는 거래량을 동반한 상승 이후, 20일선 근처에서 조정을 받고 있습니다.
+        현재가 {t_price:,}원에서 진입 시, 이전 고점인 {t_target:,}원까지 약 {t_yield:.1f}% 의 기대 수익이 예상됩니다. 
+        관련 뉴스와 시장 분위기는 {t_news} 상태입니다. 단기 스윙 타점, 지금 바로 확인해보세요!
+        """
+        st.markdown(f'<div class="script-box" id="tts_script">{script_content}</div>', unsafe_allow_html=True)
+
+else:
+    st.error("데이터를 수집하지 못했습니다. 연결 상태를 확인해주세요.")
