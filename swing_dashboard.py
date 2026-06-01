@@ -77,11 +77,9 @@ def get_naver_top_universe():
     return full_df.sort_values(by='거래대금', ascending=False).head(100).reset_index(drop=True)
 
 # =============================================================================
-# 2. 증권사 목표가 및 뉴스 센티먼트 분석 (🚀 FnGuide 데이터 원본 다이렉트 추적 버전)
+# 2. 증권사 목표가 및 뉴스 센티먼트 분석 (🔥 백엔드 JSON API 직접 타격 최종 완성본)
 # =============================================================================
 def get_fundamentals_and_news(code):
-    import re
-
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
     }
@@ -89,7 +87,7 @@ def get_fundamentals_and_news(code):
     target_price = "N/A"
     news_status = "☁️ 특징 없음"
     
-    # 🎯 [뉴스 온도계] - 기존에 잘 작동하던 로직 그대로 유지
+    # 🎯 [뉴스 온도계] - 기존 잘 작동하는 로직 유지
     try:
         url_news = f"https://finance.naver.com/item/news_news.naver?code={code}&page=1"
         res_news = requests.get(url_news, headers=headers, timeout=5)
@@ -111,40 +109,42 @@ def get_fundamentals_and_news(code):
     except Exception:
         pass
 
-    # 🎯 [목표가 초강력 수정] - 네이버를 거치지 않고 에프앤가이드 원본 껍데기를 바로 땁니다.
+    # 🎯 [목표가 초강력 핵수정] - 복잡한 HTML 파싱 전면 폐기! 네이버 금융 내부 실시간 JSON 데이터 통로를 직접 찌릅니다.
     try:
-        # 네이버 금융이 내부적으로 불러오는 에프앤가이드 기업분석 원본 주소입니다.
-        url_fnguide = f"https://comp.fnguide.com/SVO2/ASP/SVD_Main.asp?gicode=A{code}"
-        res_fn = requests.get(url_fnguide, headers=headers, timeout=5)
-        soup_fn = BeautifulSoup(res_fn.text, 'html.parser')
+        # 네이버 금융이 우측 투자정보(컨센서스 마켓포인트)를 그릴 때 몰래 호출하는 순수 데이터 API 주소입니다.
+        url_json = f"https://m.stock.naver.com/api/stock/{code}/integration"
+        res_json = requests.get(url_json, headers=headers, timeout=5)
         
-        # '컨센서스 변동현황' 표나 목표주가 란을 직접 타격합니다.
-        # 에프앤가이드 페이지 내에서 "목표주가" 항목 옆의 숫자를 추적합니다.
-        target_span = soup_fn.find(text=re.compile(r'목표주가'))
-        if not target_span:
-            # 다른 태그 형태일 경우를 대비해 th/td 구조로 한 번 더 촘촘하게 검색
-            target_span = soup_fn.find(lambda tag: tag.name in ['th', 'td'] and '목표주가' in tag.get_text())
+        if res_json.status_code == 200:
+            data_dict = res_json.json()
             
-        if target_span:
-            # 대개 목표주가 글씨가 들어간 칸 뒤의 td나 parent 구조에 숫자가 들어있습니다.
-            parent_tr = target_span.find_parent('tr')
-            if parent_tr:
-                tds = parent_tr.find_all('td')
-                for td in tds:
-                    val = td.text.strip().replace(',', '')
-                    # 투자의견(BUY) 같은 문자를 제외하고 순수하게 숫자만 필터링
-                    if val.isdigit() and int(val) > 100:
-                        target_price = val
-                        break
+            # 1단계 격파: 통합 데이터 내부에서 기업분석(company) 또는 컨센서스(consensus) 딕셔너리 추적
+            total_infos = data_dict.get('totalInfos', {})
+            if total_infos:
+                # 네이버 모바일 API 구조상 적정주가/목표주가 데이터 필드명을 직접 타겟팅합니다.
+                # 보통 'targetPrice'나 'estimationPrice' 등의 필드에 숫자가 그대로 들어있습니다.
+                raw_target = total_infos.get('targetPrice') or total_infos.get('estimationPrice')
+                
+                if raw_target:
+                    # 숫자가 문자열로 들어있거나 컴마가 있을 경우를 대비해 정제
+                    val_str = str(raw_target).replace(',', '').strip()
+                    if val_str.isdigit() and int(val_str) > 0:
+                        target_price = val_str
                         
-        # 만약 위 로직으로도 못 잡았을 때를 대비한 2차 백업 스크리닝 (상단 요약 섹션 타격)
-        if target_price == "N/A":
-            # 에프앤가이드 상단 적정주가/목표주가 컨센서스 영역 직접 파싱
-            comment_div = soup_fn.select_one('#str_comment')
-            if comment_div:
-                match = re.search(r'목표주가.*?([\d,]+)원', comment_div.text)
-                if match:
-                    target_price = match.group(1).replace(',', '')
+            # 2단계 백업: 위 주소에서 안 나올 경우 모바일 주식 전용 기업개요 API로 2차 정밀 타격
+            if target_price == "N/A":
+                url_backup = f"https://m.stock.naver.com/api/stock/{code}/company"
+                res_backup = requests.get(url_backup, headers=headers, timeout=5)
+                if res_backup.status_code == 200:
+                    backup_data = res_backup.json()
+                    # 종목 분석 컨센서스 데이터 구조 파헤치기
+                    consensus = backup_data.get('consensus', {})
+                    if consensus:
+                        raw_target = consensus.get('targetPrice')
+                        if raw_target:
+                            val_str = str(raw_target).replace(',', '').strip()
+                            if val_str.isdigit() and int(val_str) > 0:
+                                target_price = val_str
     except Exception:
         pass
         
