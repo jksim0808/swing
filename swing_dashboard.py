@@ -1,8 +1,22 @@
-# === [필수 패치] 스트림릿 Python 3.14 호환성 강제 우회 코드 ===
+# === [강력 패치] 스트림릿 Python 3.14 호환성 완벽 우회 코드 ===
 import sys
 import types
+import os
+
 if 'pkg_resources' not in sys.modules:
-    sys.modules['pkg_resources'] = types.ModuleType('pkg_resources')
+    # 1. 가짜 pkg_resources 모듈 생성
+    mock_pkg_resources = types.ModuleType('pkg_resources')
+    
+    # 2. 에러가 발생한 resource_filename 함수를 흉내 내는 가짜 함수 정의
+    def mock_resource_filename(package_or_requirement, resource_name):
+        # 폰트 파일 등 리소스 경로를 요구할 때, 그냥 현재 폴더의 더미 경로를 반환하여 통과시킴
+        return os.path.join(os.getcwd(), resource_name)
+    
+    # 3. 가짜 모듈 안에 가짜 함수 삽입
+    mock_pkg_resources.resource_filename = mock_resource_filename
+    
+    # 4. 시스템 모듈에 등록
+    sys.modules['pkg_resources'] = mock_pkg_resources
 # ==============================================================
 
 import streamlit as st
@@ -13,6 +27,11 @@ from datetime import datetime, timedelta, timezone
 import FinanceDataReader as fdr
 import concurrent.futures
 from pykrx import stock
+
+# =============================================================================
+# [설정] 기본 셋팅
+# =============================================================================
+st.set_page_config(layout="wide", page_title="🎯 전천후 스윙 스캐너")
 
 # =============================================================================
 # [설정] 기본 셋팅
