@@ -4,6 +4,8 @@ import numpy as np
 import plotly.graph_objects as go
 import requests
 import io
+import re
+import time
 from datetime import datetime, timedelta, timezone
 import FinanceDataReader as fdr
 from bs4 import BeautifulSoup
@@ -77,55 +79,56 @@ def get_naver_top_universe():
     return full_df.sort_values(by='거래대금', ascending=False).head(100).reset_index(drop=True)
 
 # =============================================================================
-# 2. 증권사 목표가 및 뉴스 센티먼트 분석 (✨ FnGuide 정밀 타격 완결판)
+# 2. 증권사 목표가 및 뉴스 센티먼트 분석 (✨ 삼성전자 목표가 + 최신 헤드라인 부활!)
 # =============================================================================
 def get_fundamentals_and_news(code):
-    import time
-    import re
-
     target_price = "리포트 없음"
     news_status = "☁️ 특징 없음"
+    news_headlines = "" # 📰 3.5 Flash 요원의 유산: 뉴스 제목 바구니
     
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
     }
     
-    # 📰 1. 뉴스 (네이버 모바일 API - 차단 없음)
+    # 📰 1. 뉴스 (네이버 모바일 API - 차단 없음 & 헤드라인 추출)
     try:
         url_news = f"https://m.stock.naver.com/api/news/stock/{code}?pageSize=10"
         res_news = requests.get(url_news, headers=headers, timeout=3)
         if res_news.status_code == 200:
-            pos_words = ['상승', '급등', '수주', '흑자', '돌파', '호실적', '성장', '최대', 'MOU', '계약', '기대', '강세', '수혜']
+            news_items = res_news.json()
+            
+            # 🔥 뉴스 제목 3개를 뽑아서 예쁜 텍스트로 만들기
+            for news in news_items[:3]:
+                title = news.get('tit', '')
+                news_headlines += f"- {title}\n"
+                
+            pos_words = ['상승', '급등', '수주', '흑자', '돌파', '호실적', '성장', '최대', 'MOU', '계약', '기대', '강세', '수혜', '주목']
             neg_words = ['하락', '급락', '적자', '우려', '매도', '악재', '위기', '감소', '부진', '소송', '폭락', '약세']
             score = 0
-            for news in res_news.json():
+            for news in news_items:
                 title = news.get('tit', '')
                 if any(w in title for w in pos_words): score += 1
                 if any(w in title for w in neg_words): score -= 1
             if score >= 2: news_status = "🔥 호재 우세"
             elif score <= -2: news_status = "❄️ 악재 우세"
     except:
-        pass
+        news_headlines = "- 뉴스 로딩 실패"
 
-    # 🎯 2. 목표가 (FnGuide 서버 렌더링 원본 HTML 정밀 파싱)
+    # 🎯 2. 목표가 (삼성전자도 무조건 잡아내는 텍스트 무차별 스캐닝)
     try:
-        # 에프앤가이드 기업 스냅샷 정식 주소
         url_fn = f"https://comp.fnguide.com/SVO2/ASP/SVD_Main.asp?pGB=1&gicode=A{code}"
         res_fn = requests.get(url_fn, headers=headers, timeout=3)
         
         if res_fn.status_code == 200:
             soup = BeautifulSoup(res_fn.text, 'html.parser')
-            # <th> 태그 중 '목표주가' 글씨가 있는 칸을 정확히 찾아서 그 옆 <td>의 숫자를 뜯어옵니다.
-            th_tags = soup.find_all('th')
-            for th in th_tags:
-                if '목표주가' in th.get_text():
-                    td = th.find_next_sibling('td')
-                    if td:
-                        # 텍스트 안에서 불필요한 공백, 쉼표 다 버리고 숫자만 추출
-                        val = re.sub(r'[^\d]', '', td.get_text())
-                        if val and int(val) > 1000:
-                            target_price = val
-                        break
+            text = soup.get_text() # HTML 껍데기(태그) 무시하고 글자만 싹 뽑기
+            
+            # 정규식: '목표주가' 글씨 뒤에 30자 이내로 등장하는 4자리 이상의 숫자 무조건 포획!
+            matches = re.findall(r'목표주가[^\d]{0,30}([1-9][\d,]{3,})', text)
+            if matches:
+                val = matches[0].replace(',', '').strip()
+                if int(val) > 1000:
+                    target_price = val
         else:
             target_price = f"오류({res_fn.status_code})"
     except Exception:
@@ -133,7 +136,8 @@ def get_fundamentals_and_news(code):
 
     time.sleep(0.1) # 과부하 방지용 0.1초 휴식
     
-    return target_price, news_status
+    return target_price, news_status, news_headlines
+
 # =============================================================================
 # 3. 일봉 분석 알고리즘 (초대형주 예외 로직)
 # =============================================================================
@@ -204,7 +208,8 @@ def get_fully_analyzed_data(universe_df):
         score, status, analyzed_df, high_price, target_yield = analyze_swing_probability(code, is_mega_cap=is_mega_cap)
         
         if score > 0:
-            analyst_target, news_status = get_fundamentals_and_news(code)
+            # 💡 기존 2개에서 3개(news_headlines)를 받는 것으로 수정!
+            analyst_target, news_status, news_headlines = get_fundamentals_and_news(code)
             
             return {
                 "상태": status,
@@ -216,6 +221,7 @@ def get_fully_analyzed_data(universe_df):
                 "전고점 기대수익(%)": target_yield, 
                 "증권사 목표가": analyst_target,
                 "뉴스 온도계": news_status,
+                "최신 뉴스": news_headlines, # 👈 바구니에 담아주기!
                 "종목코드": code
             }, name, analyzed_df
         return None
@@ -234,6 +240,7 @@ def get_fully_analyzed_data(universe_df):
                 charts_data[name] = df
                 
     return results, charts_data
+
 # =============================================================================
 # 4. 메인 화면 렌더링
 # =============================================================================
@@ -273,6 +280,7 @@ if not universe_df.empty:
             t_yield = top_30_df.iloc[idx]['전고점 기대수익(%)']
             t_news = top_30_df.iloc[idx]['뉴스 온도계']
             t_marcap = top_30_df.iloc[idx]['시가총액(억)']
+            t_news_list = top_30_df.iloc[idx]['최신 뉴스'] # 👈 뉴스 꺼내오기!
             
             st.markdown("---")
             col_chart, col_summary = st.columns([3, 1])
@@ -284,11 +292,13 @@ if not universe_df.empty:
                 st.write(f"- **손절가(-3%):** {int(t_price * 0.97):,}원")
                 st.write(f"- **기대수익률:** +{t_yield:.1f}%")
                 st.write(f"- **뉴스 분위기:** {t_news}")
+                st.markdown("**📰 최신 주요 뉴스**") # 👈 화면에 그리기
+                st.markdown(t_news_list)
             
             with col_chart:
                 df_chart = charts_data[t_name]
                 
-                # 💡 [핵심 수정] 날짜 데이터를 안전하게 문자열로 변환하여 차트 증발 현상 방지
+                # 💡 날짜 데이터를 안전하게 문자열로 변환하여 차트 증발 현상 방지
                 date_str = pd.to_datetime(df_chart['날짜']).dt.strftime('%Y-%m-%d')
                 
                 fig = go.Figure(go.Candlestick(
