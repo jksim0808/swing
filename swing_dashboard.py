@@ -1,3 +1,10 @@
+# === [필수 패치] 스트림릿 Python 3.14 호환성 강제 우회 코드 ===
+import sys
+import types
+if 'pkg_resources' not in sys.modules:
+    sys.modules['pkg_resources'] = types.ModuleType('pkg_resources')
+# ==============================================================
+
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -6,11 +13,7 @@ from datetime import datetime, timedelta, timezone
 import FinanceDataReader as fdr
 import concurrent.futures
 from pykrx import stock
-# 스트림릿 클라우드 pkg_resources 에러 강제 우회 패치
-import sys
-import types
-if 'pkg_resources' not in sys.modules:
-    sys.modules['pkg_resources'] = types.ModuleType('pkg_resources')
+
 # =============================================================================
 # [설정] 기본 셋팅
 # =============================================================================
