@@ -4,19 +4,17 @@ import numpy as np
 import plotly.graph_objects as go
 import requests
 import io
-import re
 import time
 from datetime import datetime, timedelta, timezone
 import FinanceDataReader as fdr
-from bs4 import BeautifulSoup
-import concurrent.futures  # 🚀 일꾼을 여러 명 복제하는 마법의 도구
+import concurrent.futures
 
 # =============================================================================
 # [설정] 기본 셋팅
 # =============================================================================
 st.set_page_config(layout="wide", page_title="🎯 전천후 스윙 스캐너")
 st.title("🎯 우량주 스윙 타점 스캐너 (안전망 풀가동 🛡️)")
-st.markdown("차트 점수, **1차 목표가(전고점)**, **증권사 컨센서스**, **뉴스 호재**를 종합 분석합니다. \n\n*(※ 현재가 10,000원 이상 & 시가총액 1,000억 원 이상 우량/중형주 한정)*")
+st.markdown("차트 점수, **1차 목표가(전고점)**, **뉴스 호재**를 종합 분석합니다. \n\n*(※ 현재가 10,000원 이상 & 시가총액 1,000억 원 이상 우량/중형주 한정)*")
 
 with st.expander("📖 AI 스캐너 상태값 선별 기준 및 매매 로직 (클릭하여 펼치기)", expanded=False):
     st.markdown("""
@@ -79,15 +77,9 @@ def get_naver_top_universe():
     return full_df.sort_values(by='거래대금', ascending=False).head(100).reset_index(drop=True)
 
 # =============================================================================
-# 2. 증권사 목표가 및 뉴스 센티먼트 분석 (🔥 진짜 최종 종결. 쥐구멍 탈출용 버전)
+# 2. 뉴스 센티먼트 분석 (⚡ 목표가 스크래핑 제거로 속도 2배 향상!)
 # =============================================================================
 def get_fundamentals_and_news(code):
-    import time
-    import re
-    from bs4 import BeautifulSoup
-    import requests
-
-    target_price = "리포트 없음"
     news_status = "☁️ 특징 없음"
     news_headlines = "" 
     
@@ -95,7 +87,7 @@ def get_fundamentals_and_news(code):
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
     }
     
-    # 📰 1. 뉴스 (네이버 모바일 API - 완벽 작동 중)
+    # 📰 뉴스 (네이버 모바일 API)
     try:
         url_news = f"https://m.stock.naver.com/api/news/stock/{code}?pageSize=10"
         res_news = requests.get(url_news, headers=headers, timeout=3)
@@ -118,32 +110,9 @@ def get_fundamentals_and_news(code):
     except:
         news_headlines = "- 뉴스 로딩 실패"
 
-    # 🎯 2. 목표가 (FnGuide 표의 칸(Cell)을 직접 뒤져서 숫자만 뜯어옵니다)
-    try:
-        url_fn = f"https://comp.fnguide.com/SVO2/ASP/SVD_Main.asp?pGB=1&gicode=A{code}"
-        res_fn = requests.get(url_fn, headers=headers, timeout=3)
-        
-        if res_fn.status_code == 200:
-            soup = BeautifulSoup(res_fn.text, 'html.parser')
-            
-            # '목표주가' 글씨가 적힌 표의 헤더(th)를 모두 찾습니다.
-            for th in soup.find_all('th'):
-                if '목표주가' in th.get_text():
-                    # 바로 옆 데이터 칸(td)을 엽니다.
-                    td = th.find_next_sibling('td')
-                    if td:
-                        # 칸 안에 EPS, PER 등 여러 숫자가 줄바꿈되어 섞여 있어도,
-                        # 4자리 이상의 숫자(예: 15,000)를 모두 찾아내면 첫 번째 큰 숫자가 무조건 목표가입니다!
-                        numbers = re.findall(r'[1-9][\d,]{3,}', td.get_text(separator=' '))
-                        if numbers:
-                            target_price = numbers[0].replace(',', '')
-                            break # 숫자를 찾았으면 즉시 루프 탈출!
-    except Exception:
-        pass
+    time.sleep(0.05) 
+    return news_status, news_headlines
 
-    time.sleep(0.1) 
-    
-    return target_price, news_status, news_headlines
 # =============================================================================
 # 3. 일봉 분석 알고리즘 (초대형주 예외 로직)
 # =============================================================================
@@ -205,7 +174,6 @@ def get_fully_analyzed_data(universe_df):
     results = []
     charts_data = {}
     
-    # 일꾼 1명이 1개 종목을 처리하는 전용 작업 지시서
     def process_stock(row):
         code, name = row['종목코드'], row['종목명']
         marcap_100m = int(row['시가총액'] / 100000000)
@@ -214,8 +182,7 @@ def get_fully_analyzed_data(universe_df):
         score, status, analyzed_df, high_price, target_yield = analyze_swing_probability(code, is_mega_cap=is_mega_cap)
         
         if score > 0:
-            # 💡 기존 2개에서 3개(news_headlines)를 받는 것으로 수정!
-            analyst_target, news_status, news_headlines = get_fundamentals_and_news(code)
+            news_status, news_headlines = get_fundamentals_and_news(code)
             
             return {
                 "상태": status,
@@ -225,19 +192,15 @@ def get_fully_analyzed_data(universe_df):
                 "현재가": row['현재가'], 
                 "1차 목표가(전고점)": high_price, 
                 "전고점 기대수익(%)": target_yield, 
-                "증권사 목표가": analyst_target,
                 "뉴스 온도계": news_status,
-                "최신 뉴스": news_headlines, # 👈 바구니에 담아주기!
+                "최신 뉴스": news_headlines, 
                 "종목코드": code
             }, name, analyzed_df
         return None
 
-    # 🚀 일꾼 5명을 동시에 투입해서 초고속으로 네이버 데이터를 긁어옵니다!
     with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
-        # 모든 종목을 일꾼들에게 던져줌
         futures = [executor.submit(process_stock, row) for i, row in universe_df.iterrows()]
         
-        # 완료된 작업부터 순서대로 수거
         for future in concurrent.futures.as_completed(futures):
             res = future.result()
             if res:
@@ -253,21 +216,16 @@ def get_fully_analyzed_data(universe_df):
 universe_df = get_naver_top_universe()
 
 if not universe_df.empty:
-    with st.spinner("🔄 우량주 필터링 및 네이버 금융 데이터 수집 중입니다. (약 15~20초 소요)"):
+    with st.spinner("🔄 우량주 필터링 및 네이버 금융 데이터 수집 중입니다. (속도 대폭 향상! 🚀)"):
         results, charts_data = get_fully_analyzed_data(universe_df)
     
     if results:
         top_30_df = pd.DataFrame(results).sort_values(by="점수", ascending=False).head(30).reset_index(drop=True)
         display_df = top_30_df.copy()
         
-        def format_target(x):
-            # 💡 에러 메시지("403 차단" 등)를 '정보 없음'으로 가리지 않고 그대로 노출시킵니다!
-            if str(x).isdigit(): return f"{int(x):,} 원"
-            return str(x) 
-        display_df['증권사 목표가'] = display_df['증권사 목표가'].apply(format_target)
-        
+        # 💡 "증권사 목표가" 열을 깔끔하게 제거하고 출력!
         selected_rows = st.dataframe(
-            display_df[['상태', '점수', '종목명', '시가총액(억)', '현재가', '1차 목표가(전고점)', '전고점 기대수익(%)', '증권사 목표가', '뉴스 온도계']],
+            display_df[['상태', '점수', '종목명', '시가총액(억)', '현재가', '1차 목표가(전고점)', '전고점 기대수익(%)', '뉴스 온도계']],
             use_container_width=True, selection_mode="single-row", on_select="rerun", hide_index=True,
             column_config={
                 "점수": st.column_config.NumberColumn("🔥 점수", format="%d 점"),
@@ -286,7 +244,7 @@ if not universe_df.empty:
             t_yield = top_30_df.iloc[idx]['전고점 기대수익(%)']
             t_news = top_30_df.iloc[idx]['뉴스 온도계']
             t_marcap = top_30_df.iloc[idx]['시가총액(억)']
-            t_news_list = top_30_df.iloc[idx]['최신 뉴스'] # 👈 뉴스 꺼내오기!
+            t_news_list = top_30_df.iloc[idx]['최신 뉴스'] 
             
             st.markdown("---")
             col_chart, col_summary = st.columns([3, 1])
@@ -298,13 +256,12 @@ if not universe_df.empty:
                 st.write(f"- **손절가(-3%):** {int(t_price * 0.97):,}원")
                 st.write(f"- **기대수익률:** +{t_yield:.1f}%")
                 st.write(f"- **뉴스 분위기:** {t_news}")
-                st.markdown("**📰 최신 주요 뉴스**") # 👈 화면에 그리기
+                st.markdown("**📰 최신 주요 뉴스**") 
                 st.markdown(t_news_list)
             
             with col_chart:
                 df_chart = charts_data[t_name]
                 
-                # 💡 날짜 데이터를 안전하게 문자열로 변환하여 차트 증발 현상 방지
                 date_str = pd.to_datetime(df_chart['날짜']).dt.strftime('%Y-%m-%d')
                 
                 fig = go.Figure(go.Candlestick(
