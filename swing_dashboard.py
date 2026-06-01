@@ -7,6 +7,7 @@ import io
 from datetime import datetime, timedelta, timezone
 import FinanceDataReader as fdr
 from bs4 import BeautifulSoup
+import concurrent.futures  # 🚀 일꾼을 여러 명 복제하는 마법의 도구
 
 # =============================================================================
 # [설정] 기본 셋팅
@@ -174,14 +175,15 @@ def analyze_swing_probability(ticker, is_mega_cap=False, days=60):
         return 0, "에러", pd.DataFrame(), 0, 0
 
 # =============================================================================
-# ✨ 통합 데이터 캐싱
+# ✨ 통합 데이터 캐싱 (🚀 멀티스레딩 초고속 엔진 장착!)
 # =============================================================================
 @st.cache_data(ttl=300, show_spinner=False)
 def get_fully_analyzed_data(universe_df):
     results = []
     charts_data = {}
     
-    for i, row in universe_df.iterrows():
+    # 일꾼 1명이 1개 종목을 처리하는 전용 작업 지시서
+    def process_stock(row):
         code, name = row['종목코드'], row['종목명']
         marcap_100m = int(row['시가총액'] / 100000000)
         is_mega_cap = marcap_100m >= 100000 
@@ -191,7 +193,7 @@ def get_fully_analyzed_data(universe_df):
         if score > 0:
             analyst_target, news_status = get_fundamentals_and_news(code)
             
-            results.append({
+            return {
                 "상태": status,
                 "점수": score, 
                 "종목명": name,
@@ -202,11 +204,23 @@ def get_fully_analyzed_data(universe_df):
                 "증권사 목표가": analyst_target,
                 "뉴스 온도계": news_status,
                 "종목코드": code
-            })
-            charts_data[name] = analyzed_df
-            
-    return results, charts_data
+            }, name, analyzed_df
+        return None
 
+    # 🚀 일꾼 15명을 동시에 투입해서 초고속으로 네이버 데이터를 긁어옵니다!
+    with concurrent.futures.ThreadPoolExecutor(max_workers=15) as executor:
+        # 모든 종목을 일꾼들에게 던져줌
+        futures = [executor.submit(process_stock, row) for i, row in universe_df.iterrows()]
+        
+        # 완료된 작업부터 순서대로 수거
+        for future in concurrent.futures.as_completed(futures):
+            res = future.result()
+            if res:
+                item, name, df = res
+                results.append(item)
+                charts_data[name] = df
+                
+    return results, charts_data
 # =============================================================================
 # 4. 메인 화면 렌더링
 # =============================================================================
