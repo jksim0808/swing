@@ -7,3 +7,4 @@ requests
 beautifulsoup4
 joblib
 scikit-learn
+pykrx
