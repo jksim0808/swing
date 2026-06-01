@@ -4,7 +4,6 @@ import numpy as np
 import plotly.graph_objects as go
 import requests
 import io
-import time
 from datetime import datetime, timedelta, timezone
 import FinanceDataReader as fdr
 import concurrent.futures
@@ -13,8 +12,8 @@ import concurrent.futures
 # [설정] 기본 셋팅
 # =============================================================================
 st.set_page_config(layout="wide", page_title="🎯 전천후 스윙 스캐너")
-st.title("🎯 우량주 스윙 타점 스캐너 (안전망 풀가동 🛡️)")
-st.markdown("차트 점수, **1차 목표가(전고점)**, **뉴스 호재**를 종합 분석합니다. \n\n*(※ 현재가 10,000원 이상 & 시가총액 1,000억 원 이상 우량/중형주 한정)*")
+st.title("🎯 우량주 스윙 타점 스캐너 (초고속 Lite 🚀)")
+st.markdown("차트 점수, **당일 등락률**, **1차 목표가(전고점)**를 3초 안에 초고속으로 스캔합니다. \n\n*(※ 현재가 10,000원 이상 & 시가총액 1,000억 원 이상 우량/중형주 한정)*")
 
 with st.expander("📖 AI 스캐너 상태값 선별 기준 및 매매 로직 (클릭하여 펼치기)", expanded=False):
     st.markdown("""
@@ -42,7 +41,7 @@ def get_krx_info():
 @st.cache_data(ttl=300)
 def get_naver_top_universe():
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
     }
     krx_info = get_krx_info()
     df_list = []
@@ -77,44 +76,7 @@ def get_naver_top_universe():
     return full_df.sort_values(by='거래대금', ascending=False).head(100).reset_index(drop=True)
 
 # =============================================================================
-# 2. 뉴스 센티먼트 분석 (⚡ 목표가 스크래핑 제거로 속도 2배 향상!)
-# =============================================================================
-def get_fundamentals_and_news(code):
-    news_status = "☁️ 특징 없음"
-    news_headlines = "" 
-    
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-    }
-    
-    # 📰 뉴스 (네이버 모바일 API)
-    try:
-        url_news = f"https://m.stock.naver.com/api/news/stock/{code}?pageSize=10"
-        res_news = requests.get(url_news, headers=headers, timeout=3)
-        if res_news.status_code == 200:
-            news_items = res_news.json()
-            
-            for news in news_items[:3]:
-                title = news.get('tit', '')
-                news_headlines += f"- {title}\n"
-                
-            pos_words = ['상승', '급등', '수주', '흑자', '돌파', '호실적', '성장', '최대', 'MOU', '계약', '기대', '강세', '수혜', '주목']
-            neg_words = ['하락', '급락', '적자', '우려', '매도', '악재', '위기', '감소', '부진', '소송', '폭락', '약세']
-            score = 0
-            for news in news_items:
-                title = news.get('tit', '')
-                if any(w in title for w in pos_words): score += 1
-                if any(w in title for w in neg_words): score -= 1
-            if score >= 2: news_status = "🔥 호재 우세"
-            elif score <= -2: news_status = "❄️ 악재 우세"
-    except:
-        news_headlines = "- 뉴스 로딩 실패"
-
-    time.sleep(0.05) 
-    return news_status, news_headlines
-
-# =============================================================================
-# 3. 일봉 분석 알고리즘 (초대형주 예외 로직)
+# 2. 일봉 분석 알고리즘 (초대형주 예외 로직)
 # =============================================================================
 def analyze_swing_probability(ticker, is_mega_cap=False, days=60):
     end_date = datetime.now(KST)
@@ -167,7 +129,7 @@ def analyze_swing_probability(ticker, is_mega_cap=False, days=60):
         return 0, "에러", pd.DataFrame(), 0, 0
 
 # =============================================================================
-# ✨ 통합 데이터 캐싱 (🚀 멀티스레딩 초고속 엔진 장착!)
+# ✨ 통합 데이터 캐싱 (🚀 멀티스레딩 초고속 엔진 장착)
 # =============================================================================
 @st.cache_data(ttl=300, show_spinner=False)
 def get_fully_analyzed_data(universe_df):
@@ -182,23 +144,20 @@ def get_fully_analyzed_data(universe_df):
         score, status, analyzed_df, high_price, target_yield = analyze_swing_probability(code, is_mega_cap=is_mega_cap)
         
         if score > 0:
-            news_status, news_headlines = get_fundamentals_and_news(code)
-            
             return {
                 "상태": status,
                 "점수": score, 
                 "종목명": name,
                 "시가총액(억)": marcap_100m, 
                 "현재가": row['현재가'], 
+                "당일 등락률(%)": row['등락률'], # 💡 당일 수익률 추가!
                 "1차 목표가(전고점)": high_price, 
                 "전고점 기대수익(%)": target_yield, 
-                "뉴스 온도계": news_status,
-                "최신 뉴스": news_headlines, 
                 "종목코드": code
             }, name, analyzed_df
         return None
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
         futures = [executor.submit(process_stock, row) for i, row in universe_df.iterrows()]
         
         for future in concurrent.futures.as_completed(futures):
@@ -211,26 +170,27 @@ def get_fully_analyzed_data(universe_df):
     return results, charts_data
 
 # =============================================================================
-# 4. 메인 화면 렌더링
+# 3. 메인 화면 렌더링
 # =============================================================================
 universe_df = get_naver_top_universe()
 
 if not universe_df.empty:
-    with st.spinner("🔄 우량주 필터링 및 네이버 금융 데이터 수집 중입니다. (속도 대폭 향상! 🚀)"):
+    with st.spinner("🔄 우량주 필터링 및 차트 데이터 분석 중입니다... (초고속 스캔 🚀)"):
         results, charts_data = get_fully_analyzed_data(universe_df)
     
     if results:
         top_30_df = pd.DataFrame(results).sort_values(by="점수", ascending=False).head(30).reset_index(drop=True)
         display_df = top_30_df.copy()
         
-        # 💡 "증권사 목표가" 열을 깔끔하게 제거하고 출력!
+        # 💡 "당일 등락률"을 추가하여 화면에 출력
         selected_rows = st.dataframe(
-            display_df[['상태', '점수', '종목명', '시가총액(억)', '현재가', '1차 목표가(전고점)', '전고점 기대수익(%)', '뉴스 온도계']],
+            display_df[['상태', '점수', '종목명', '시가총액(억)', '현재가', '당일 등락률(%)', '1차 목표가(전고점)', '전고점 기대수익(%)']],
             use_container_width=True, selection_mode="single-row", on_select="rerun", hide_index=True,
             column_config={
                 "점수": st.column_config.NumberColumn("🔥 점수", format="%d 점"),
                 "시가총액(억)": st.column_config.NumberColumn("🏢 시가총액", format="%d 억"),
                 "현재가": st.column_config.NumberColumn("현재가", format="%d 원"),
+                "당일 등락률(%)": st.column_config.NumberColumn("📈 당일 수익률", format="%.2f %%"),
                 "1차 목표가(전고점)": st.column_config.NumberColumn("1차 목표가", format="%d 원"),
                 "전고점 기대수익(%)": st.column_config.NumberColumn("🎯 기대수익(%)", format="%.1f %%")
             }
@@ -240,11 +200,10 @@ if not universe_df.empty:
             idx = selected_rows.selection.rows[0]
             t_name = top_30_df.iloc[idx]['종목명']
             t_price = top_30_df.iloc[idx]['현재가']
+            t_change = top_30_df.iloc[idx]['당일 등락률(%)']
             t_target = top_30_df.iloc[idx]['1차 목표가(전고점)']
             t_yield = top_30_df.iloc[idx]['전고점 기대수익(%)']
-            t_news = top_30_df.iloc[idx]['뉴스 온도계']
             t_marcap = top_30_df.iloc[idx]['시가총액(억)']
-            t_news_list = top_30_df.iloc[idx]['최신 뉴스'] 
             
             st.markdown("---")
             col_chart, col_summary = st.columns([3, 1])
@@ -252,12 +211,10 @@ if not universe_df.empty:
                 st.info(f"**💡 {t_name} 요약**")
                 st.write(f"- **시가총액:** {int(t_marcap):,}억 원")
                 st.write(f"- **현재가:** {int(t_price):,}원")
+                st.write(f"- **당일 수익률:** {t_change:+.2f}%") # 💡 당일 수익률 요약 반영
                 st.write(f"- **목표가(전고점):** {int(t_target):,}원")
                 st.write(f"- **손절가(-3%):** {int(t_price * 0.97):,}원")
                 st.write(f"- **기대수익률:** +{t_yield:.1f}%")
-                st.write(f"- **뉴스 분위기:** {t_news}")
-                st.markdown("**📰 최신 주요 뉴스**") 
-                st.markdown(t_news_list)
             
             with col_chart:
                 df_chart = charts_data[t_name]
