@@ -77,27 +77,31 @@ def get_naver_top_universe():
     return full_df.sort_values(by='거래대금', ascending=False).head(100).reset_index(drop=True)
 
 # =============================================================================
-# 2. 증권사 목표가 및 뉴스 센티먼트 분석
+# 2. 증권사 목표가 및 뉴스 센티먼트 분석 (💡 독립적 예외처리로 에러 방어력 강화!)
 # =============================================================================
 def get_fundamentals_and_news(code):
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-        'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
     }
     
     target_price = "N/A"
-    news_status = "☁️ 보통"
+    news_status = "☁️ 특징 없음"
     
+    # 🎯 1. 증권사 목표가 전용 블록 (여기서 에러가 나도 뉴스는 수집하러 갑니다!)
     try:
         url_main = f"https://finance.naver.com/item/main.naver?code={code}"
         res_main = requests.get(url_main, headers=headers, timeout=5)
+        res_main.encoding = 'euc-kr'  # 💡 네이버 금융 한글 깨짐 완벽 방지
         soup_main = BeautifulSoup(res_main.text, 'html.parser')
         
         cns_eps = soup_main.select_one('#_step_bank_cns')
         if cns_eps:
             target_price = cns_eps.text.strip().replace(',', '')
+    except Exception:
+        pass  # 목표가를 못 찾으면 쿨하게 넘어가고 뉴스 수집으로 이동
         
+    # 📰 2. 뉴스 센티먼트 전용 블록
+    try:
         url_news = f"https://finance.naver.com/item/news_news.naver?code={code}&page=1"
         res_news = requests.get(url_news, headers=headers, timeout=5)
         soup_news = BeautifulSoup(res_news.content.decode('euc-kr', 'replace'), 'html.parser')
@@ -115,8 +119,7 @@ def get_fundamentals_and_news(code):
         if score >= 2: news_status = "🔥 호재 우세"
         elif score <= -2: news_status = "❄️ 악재 우세"
         else: news_status = "☁️ 특징 없음"
-        
-    except Exception as e:
+    except Exception:
         pass
         
     return target_price, news_status
