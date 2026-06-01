@@ -79,11 +79,12 @@ def get_naver_top_universe():
     return full_df.sort_values(by='거래대금', ascending=False).head(100).reset_index(drop=True)
 
 # =============================================================================
-# 2. 증권사 목표가 및 뉴스 센티먼트 분석 (✨ 대형주 목표가 완벽 인식 + 뉴스 헤드라인)
+# 2. 증권사 목표가 및 뉴스 센티먼트 분석 (✨ 대형주 완벽 핀셋 픽업!)
 # =============================================================================
 def get_fundamentals_and_news(code):
     import time
     from bs4 import BeautifulSoup
+    import requests
 
     target_price = "리포트 없음"
     news_status = "☁️ 특징 없음"
@@ -100,7 +101,7 @@ def get_fundamentals_and_news(code):
         if res_news.status_code == 200:
             news_items = res_news.json()
             
-            # 🔥 최신 뉴스 제목 3개 추출
+            # 🔥 뉴스 제목 3개 추출
             for news in news_items[:3]:
                 title = news.get('tit', '')
                 news_headlines += f"- {title}\n"
@@ -117,19 +118,26 @@ def get_fundamentals_and_news(code):
     except:
         news_headlines = "- 뉴스 로딩 실패"
 
-    # 🎯 2. 목표가 (네이버 금융 메인 페이지 태그 직접 타격 - NAVER, LG 등 완벽 해결!)
+    # 🎯 2. 목표가 (네이버 금융 우측 '투자정보' 표 핀셋 타격)
     try:
         url_main = f"https://finance.naver.com/item/main.naver?code={code}"
         res_main = requests.get(url_main, headers=headers, timeout=3)
-        res_main.encoding = 'euc-kr' # 💡 한글 깨짐 완벽 방지
-        soup_main = BeautifulSoup(res_main.text, 'html.parser')
+        res_main.encoding = 'euc-kr' # 한글 깨짐 방지
+        soup = BeautifulSoup(res_main.text, 'html.parser')
         
-        # 네이버 금융 우측 하단 '목표주가' 고유 태그(#_step_bank_cns)를 정확하게 짚어옵니다.
-        cns_tag = soup_main.select_one('#_step_bank_cns')
-        if cns_tag:
-            val = cns_tag.text.replace(',', '').strip()
-            if val.isdigit() and int(val) > 0:
-                target_price = val
+        # '목표주가'라는 단어가 포함된 th 태그를 정확히 찾습니다.
+        th_tag = soup.find(lambda tag: tag.name == 'th' and '목표주가' in tag.get_text())
+        if th_tag:
+            # 그 바로 옆에 있는 td 태그를 가져옵니다.
+            td_tag = th_tag.find_next_sibling('td')
+            if td_tag:
+                # td 안의 첫 번째 em 태그에 목표가가 들어있습니다. (목표가가 없는 종목은 N/A로 적혀있음)
+                em_tag = td_tag.find('em')
+                if em_tag:
+                    val = em_tag.text.replace(',', '').strip()
+                    # 숫자인지 확인합니다. N/A면 무시하고 '리포트 없음' 유지!
+                    if val.isdigit() and int(val) > 0:
+                        target_price = val
     except Exception:
         pass
 
