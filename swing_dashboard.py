@@ -77,19 +77,19 @@ def get_naver_top_universe():
     return full_df.sort_values(by='거래대금', ascending=False).head(100).reset_index(drop=True)
 
 # =============================================================================
-# 2. 증권사 목표가 및 뉴스 센티먼트 분석 (💡 비밀 데이터 통로 직접 추적 버전)
+# 2. 증권사 목표가 및 뉴스 센티먼트 분석 (🚀 FnGuide 데이터 원본 다이렉트 추적 버전)
 # =============================================================================
 def get_fundamentals_and_news(code):
-    # 💡 봇 차단 회피용 헤더 설정
+    import re
+
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-        'Referer': f'https://finance.naver.com/item/main.naver?code={code}'
     }
     
     target_price = "N/A"
-    
-    # 🎯 [기존 뉴스 온도계 유지] - 잘 작동하므로 그대로 둡니다!
     news_status = "☁️ 특징 없음"
+    
+    # 🎯 [뉴스 온도계] - 기존에 잘 작동하던 로직 그대로 유지
     try:
         url_news = f"https://finance.naver.com/item/news_news.naver?code={code}&page=1"
         res_news = requests.get(url_news, headers=headers, timeout=5)
@@ -111,29 +111,44 @@ def get_fundamentals_and_news(code):
     except Exception:
         pass
 
-    # 🎯 [목표가 핵수정] - 늦게 로딩되는 화면 무시하고, 네이버가 내부적으로 쓰는 숫자 데이터 백엔드 주소를 직접 때립니다.
+    # 🎯 [목표가 초강력 수정] - 네이버를 거치지 않고 에프앤가이드 원본 껍데기를 바로 땁니다.
     try:
-        # 네이버 금융이 투자정보 표를 그릴 때 내부적으로 호출하는 실제 데이터 주소입니다.
-        url_target = f"https://finance.naver.com/item/coinfo.naver?code={code}"
-        res_target = requests.get(url_target, headers=headers, timeout=5)
-        res_target.encoding = 'euc-kr'
-        soup_target = BeautifulSoup(res_target.text, 'html.parser')
+        # 네이버 금융이 내부적으로 불러오는 에프앤가이드 기업분석 원본 주소입니다.
+        url_fnguide = f"https://comp.fnguide.com/SVO2/ASP/SVD_Main.asp?gicode=A{code}"
+        res_fn = requests.get(url_fnguide, headers=headers, timeout=5)
+        soup_fn = BeautifulSoup(res_fn.text, 'html.parser')
         
-        # '목표주가'를 텍스트로 가진 항목을 직접 추적
-        th_target = soup_target.find(lambda tag: tag.name == 'th' and '목표주가' in tag.get_text())
-        if th_target:
-            td_target = th_target.find_next_sibling('td')
-            if td_target:
-                # 쉼표나 공백, '원' 글씨를 싹 지우고 오직 숫자 매칭만 진행
-                raw_val = td_target.text.strip().replace(',', '')
-                # 숫자로만 이루어져 있는지 안전 검사 (목표가가 없는 종목은 배제)
-                if raw_val.isdigit() and int(raw_val) > 0:
-                    target_price = raw_val
+        # '컨센서스 변동현황' 표나 목표주가 란을 직접 타격합니다.
+        # 에프앤가이드 페이지 내에서 "목표주가" 항목 옆의 숫자를 추적합니다.
+        target_span = soup_fn.find(text=re.compile(r'목표주가'))
+        if not target_span:
+            # 다른 태그 형태일 경우를 대비해 th/td 구조로 한 번 더 촘촘하게 검색
+            target_span = soup_fn.find(lambda tag: tag.name in ['th', 'td'] and '목표주가' in tag.get_text())
+            
+        if target_span:
+            # 대개 목표주가 글씨가 들어간 칸 뒤의 td나 parent 구조에 숫자가 들어있습니다.
+            parent_tr = target_span.find_parent('tr')
+            if parent_tr:
+                tds = parent_tr.find_all('td')
+                for td in tds:
+                    val = td.text.strip().replace(',', '')
+                    # 투자의견(BUY) 같은 문자를 제외하고 순수하게 숫자만 필터링
+                    if val.isdigit() and int(val) > 100:
+                        target_price = val
+                        break
+                        
+        # 만약 위 로직으로도 못 잡았을 때를 대비한 2차 백업 스크리닝 (상단 요약 섹션 타격)
+        if target_price == "N/A":
+            # 에프앤가이드 상단 적정주가/목표주가 컨센서스 영역 직접 파싱
+            comment_div = soup_fn.select_one('#str_comment')
+            if comment_div:
+                match = re.search(r'목표주가.*?([\d,]+)원', comment_div.text)
+                if match:
+                    target_price = match.group(1).replace(',', '')
     except Exception:
         pass
         
     return target_price, news_status
-
 # =============================================================================
 # 3. 일봉 분석 알고리즘 (초대형주 예외 로직)
 # =============================================================================
