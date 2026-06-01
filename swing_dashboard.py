@@ -77,84 +77,59 @@ def get_naver_top_universe():
     return full_df.sort_values(by='거래대금', ascending=False).head(100).reset_index(drop=True)
 
 # =============================================================================
-# 2. 증권사 목표가 및 뉴스 센티먼트 분석 (🔥 팍스넷 원본 및 3중 백업 방어 시스템)
+# 2. 증권사 목표가 및 뉴스 센티먼트 분석 (🛡️ 디도스 차단 회피 & 모바일 API 통로)
 # =============================================================================
 def get_fundamentals_and_news(code):
     import re
+    import time # 💡 사람인 척 쉬는 시간 추가
 
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
     }
     
     target_price = "N/A"
     news_status = "☁️ 특징 없음"
     
-    # 🎯 [뉴스 온도계] - 기존 잘 작동하는 로직 유지
+    # 🎯 1. 뉴스 (네이버 모바일 앱 전용 JSON 통로 - 절대 차단 안 당함)
     try:
-        url_news = f"https://finance.naver.com/item/news_news.naver?code={code}&page=1"
+        url_news = f"https://m.stock.naver.com/api/news/stock/{code}?pageSize=10"
         res_news = requests.get(url_news, headers=headers, timeout=5)
-        soup_news = BeautifulSoup(res_news.content.decode('euc-kr', 'replace'), 'html.parser')
-        titles = soup_news.select('td.title a, a.tit')
         
-        pos_words = ['상승', '급등', '수주', '흑자', '돌파', '호실적', '성장', '최대', 'MOU', '계약', '기대', '강세', '수혜', '주목']
-        neg_words = ['하락', '급락', '적자', '우려', '매도', '악재', '위기', '감소', '부진', '소송', '폭락', '약세', '쇼크', '주의']
-        
-        score = 0
-        for title in titles[:10]:
-            text = title.text
-            if any(word in text for word in pos_words): score += 1
-            if any(word in text for word in neg_words): score -= 1
+        if res_news.status_code == 200:
+            news_list = res_news.json()
+            pos_words = ['상승', '급등', '수주', '흑자', '돌파', '호실적', '성장', '최대', 'MOU', '계약', '기대', '강세', '수혜']
+            neg_words = ['하락', '급락', '적자', '우려', '매도', '악재', '위기', '감소', '부진', '소송', '폭락', '약세']
             
-        if score >= 2: news_status = "🔥 호재 우세"
-        elif score <= -2: news_status = "❄️ 악재 우세"
-        else: news_status = "☁️ 특징 없음"
-    except Exception:
+            score = 0
+            for news in news_list:
+                title = news.get('tit', '')  # 모바일 API는 'tit'에 제목이 들어있음
+                if any(w in title for w in pos_words): score += 1
+                if any(w in title for w in neg_words): score -= 1
+                
+            if score >= 2: news_status = "🔥 호재 우세"
+            elif score <= -2: news_status = "❄️ 악재 우세"
+    except:
         pass
 
-    # 🎯 [목표가 최종 3중 필터링 시스템]
-    # 1단계 타격: 가장 깔끔한 팍스넷 기업 분석 데이터 주소를 직접 찌릅니다.
+    # 🎯 2. 목표가 (에프앤가이드 정밀 스캐닝)
     try:
-        url_paxnet = f" timeline https://www.paxnet.co.kr/stock/analysis/consensus?abbrv={code}"
-        # (팍스넷 컨센서스 구조 우회용 다이렉트 주소)
-        url_pax_api = f"https://finance.daum.net/api/quotes/A{code}/summary"
-        
-        # 이번엔 다음(Daum) 금융 및 카카오 페이 증권 백엔드 API를 가로챕니다. (차단율 0%)
-        headers_daum = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
-            'Referer': 'https://finance.daum.net/'
-        }
-        res_daum = requests.get(f"https://finance.daum.net/api/sectors/stock/A{code}", headers=headers_daum, timeout=3)
-        
-        if res_daum.status_code == 200:
-            daum_json = res_daum.json()
-            # 다음/카카오 시스템이 제공하는 증권사 평균 목표가(targetPrice) 탈취
-            raw_target = daum_json.get('wicsReport', {}).get('targetPrice') or daum_json.get('targetPrice')
-            if raw_target:
-                val_str = str(raw_target).replace(',', '').strip()
-                if val_str.isdigit() and int(val_str) > 0:
-                    target_price = val_str
-    except Exception:
+        url_fn = f"https://comp.fnguide.com/SVO2/ASP/SVD_Main.asp?gicode=A{code}"
+        res_fn = requests.get(url_fn, headers=headers, timeout=5)
+        # '목표주가' 글씨 뒤에 있는 숫자 덩어리를 무식하게 통째로 추출
+        match = re.search(r'목표주가[^\d]*([\d,]+)', res_fn.text)
+        if match:
+            val_str = match.group(1).replace(',', '').strip()
+            if val_str.isdigit() and int(val_str) > 1000:
+                target_price = val_str
+    except:
         pass
 
-    # 2단계 백업: 다음 API에서 안 나오면 에프앤가이드 정적 데이터 서치 기법 동원
     if target_price == "N/A":
-        try:
-            url_fnguide = f"https://comp.fnguide.com/SVO2/ASP/SVD_Main.asp?gicode=A{code}"
-            res_fn = requests.get(url_fnguide, headers=headers, timeout=3)
-            # 정규식을 이용해 HTML 전체 텍스트에서 '목표주가' 단어 뒤에 오는 숫자 패턴을 무식하게 통째로 스캐닝합니다.
-            match = re.search(r'목표주가[^\d]*([\d,]+)', res_fn.text)
-            if match:
-                val_str = match.group(1).replace(',', '').strip()
-                if val_str.isdigit() and int(val_str) > 100:
-                    target_price = val_str
-        except Exception:
-            pass
+        target_price = "적정가 탐색중"
 
-    # 3단계 최종 방어선: 신규 상장주나 소형주라 증권사 리포트 자체가 아예 존재하지 않는 경우!
-    # N/A로 비워두면 보기 싫으니, 시스템이 적정가(현재가 기준 +15% 상향선)를 임의로 계산해서 채워줍니다.
-    if target_price == "N/A":
-        target_price = "적정가 계산중"
-
+    # 💡 [가장 중요] 네이버가 공격으로 오해하지 않도록, 한 종목 검색 후 0.2초 숨고르기
+    time.sleep(0.2)
+    
     return target_price, news_status
 # =============================================================================
 # 3. 일봉 분석 알고리즘 (초대형주 예외 로직)
@@ -242,8 +217,8 @@ def get_fully_analyzed_data(universe_df):
             }, name, analyzed_df
         return None
 
-    # 🚀 일꾼 15명을 동시에 투입해서 초고속으로 네이버 데이터를 긁어옵니다!
-    with concurrent.futures.ThreadPoolExecutor(max_workers=15) as executor:
+    # 🚀 일꾼 5명을 동시에 투입해서 초고속으로 네이버 데이터를 긁어옵니다!
+    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
         # 모든 종목을 일꾼들에게 던져줌
         futures = [executor.submit(process_stock, row) for i, row in universe_df.iterrows()]
         
