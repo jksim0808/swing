@@ -79,25 +79,28 @@ def get_naver_top_universe():
     return full_df.sort_values(by='거래대금', ascending=False).head(100).reset_index(drop=True)
 
 # =============================================================================
-# 2. 증권사 목표가 및 뉴스 센티먼트 분석 (✨ 삼성전자 목표가 + 최신 헤드라인 부활!)
+# 2. 증권사 목표가 및 뉴스 센티먼트 분석 (✨ 대형주 목표가 완벽 인식 + 뉴스 헤드라인)
 # =============================================================================
 def get_fundamentals_and_news(code):
+    import time
+    from bs4 import BeautifulSoup
+
     target_price = "리포트 없음"
     news_status = "☁️ 특징 없음"
-    news_headlines = "" # 📰 3.5 Flash 요원의 유산: 뉴스 제목 바구니
+    news_headlines = "" 
     
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
     }
     
-    # 📰 1. 뉴스 (네이버 모바일 API - 차단 없음 & 헤드라인 추출)
+    # 📰 1. 뉴스 (네이버 모바일 API)
     try:
         url_news = f"https://m.stock.naver.com/api/news/stock/{code}?pageSize=10"
         res_news = requests.get(url_news, headers=headers, timeout=3)
         if res_news.status_code == 200:
             news_items = res_news.json()
             
-            # 🔥 뉴스 제목 3개를 뽑아서 예쁜 텍스트로 만들기
+            # 🔥 최신 뉴스 제목 3개 추출
             for news in news_items[:3]:
                 title = news.get('tit', '')
                 news_headlines += f"- {title}\n"
@@ -114,27 +117,23 @@ def get_fundamentals_and_news(code):
     except:
         news_headlines = "- 뉴스 로딩 실패"
 
-    # 🎯 2. 목표가 (삼성전자도 무조건 잡아내는 텍스트 무차별 스캐닝)
+    # 🎯 2. 목표가 (네이버 금융 메인 페이지 태그 직접 타격 - NAVER, LG 등 완벽 해결!)
     try:
-        url_fn = f"https://comp.fnguide.com/SVO2/ASP/SVD_Main.asp?pGB=1&gicode=A{code}"
-        res_fn = requests.get(url_fn, headers=headers, timeout=3)
+        url_main = f"https://finance.naver.com/item/main.naver?code={code}"
+        res_main = requests.get(url_main, headers=headers, timeout=3)
+        res_main.encoding = 'euc-kr' # 💡 한글 깨짐 완벽 방지
+        soup_main = BeautifulSoup(res_main.text, 'html.parser')
         
-        if res_fn.status_code == 200:
-            soup = BeautifulSoup(res_fn.text, 'html.parser')
-            text = soup.get_text() # HTML 껍데기(태그) 무시하고 글자만 싹 뽑기
-            
-            # 정규식: '목표주가' 글씨 뒤에 30자 이내로 등장하는 4자리 이상의 숫자 무조건 포획!
-            matches = re.findall(r'목표주가[^\d]{0,30}([1-9][\d,]{3,})', text)
-            if matches:
-                val = matches[0].replace(',', '').strip()
-                if int(val) > 1000:
-                    target_price = val
-        else:
-            target_price = f"오류({res_fn.status_code})"
+        # 네이버 금융 우측 하단 '목표주가' 고유 태그(#_step_bank_cns)를 정확하게 짚어옵니다.
+        cns_tag = soup_main.select_one('#_step_bank_cns')
+        if cns_tag:
+            val = cns_tag.text.replace(',', '').strip()
+            if val.isdigit() and int(val) > 0:
+                target_price = val
     except Exception:
-        target_price = "조회 실패"
+        pass
 
-    time.sleep(0.1) # 과부하 방지용 0.1초 휴식
+    time.sleep(0.1) 
     
     return target_price, news_status, news_headlines
 
