@@ -77,58 +77,44 @@ def get_naver_top_universe():
     return full_df.sort_values(by='거래대금', ascending=False).head(100).reset_index(drop=True)
 
 # =============================================================================
-# 2. 증권사 목표가 및 뉴스 센티먼트 분석 (🛡️ 디도스 차단 회피 & 모바일 API 통로)
+# 2. 증권사 목표가 및 뉴스 센티먼트 분석 (🕵️‍♂️ 에러 원인 정밀 진단 버전)
 # =============================================================================
 def get_fundamentals_and_news(code):
-    import re
-    import time # 💡 사람인 척 쉬는 시간 추가
+    import time
 
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-    }
-    
-    target_price = "N/A"
+    target_price = "진단중..."
     news_status = "☁️ 특징 없음"
     
-    # 🎯 1. 뉴스 (네이버 모바일 앱 전용 JSON 통로 - 절대 차단 안 당함)
+    # 다음 금융 API로 접속 테스트
+    headers_daum = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+        'Referer': 'https://finance.daum.net/'
+    }
+    
     try:
-        url_news = f"https://m.stock.naver.com/api/news/stock/{code}?pageSize=10"
-        res_news = requests.get(url_news, headers=headers, timeout=5)
+        url = f"https://finance.daum.net/api/sectors/stock/A{code}"
+        res = requests.get(url, headers=headers_daum, timeout=3)
         
-        if res_news.status_code == 200:
-            news_list = res_news.json()
-            pos_words = ['상승', '급등', '수주', '흑자', '돌파', '호실적', '성장', '최대', 'MOU', '계약', '기대', '강세', '수혜']
-            neg_words = ['하락', '급락', '적자', '우려', '매도', '악재', '위기', '감소', '부진', '소송', '폭락', '약세']
+        # 💡 상태 코드(Status Code)를 직접 확인합니다.
+        if res.status_code == 403:
+            target_price = "⛔ 403: IP 영구차단"
+        elif res.status_code == 200:
+            data = res.json()
+            raw = data.get('wicsReport', {}).get('targetPrice') or data.get('targetPrice')
             
-            score = 0
-            for news in news_list:
-                title = news.get('tit', '')  # 모바일 API는 'tit'에 제목이 들어있음
-                if any(w in title for w in pos_words): score += 1
-                if any(w in title for w in neg_words): score -= 1
-                
-            if score >= 2: news_status = "🔥 호재 우세"
-            elif score <= -2: news_status = "❄️ 악재 우세"
-    except:
-        pass
+            if raw and str(raw).isdigit() and int(raw) > 0:
+                target_price = str(raw)
+            else:
+                target_price = "리포트 없음"
+        else:
+            target_price = f"오류({res.status_code})"
+            
+    except requests.exceptions.Timeout:
+        target_price = "⏳ 접속 지연"
+    except Exception as e:
+        target_price = "접속 실패"
 
-    # 🎯 2. 목표가 (에프앤가이드 정밀 스캐닝)
-    try:
-        url_fn = f"https://comp.fnguide.com/SVO2/ASP/SVD_Main.asp?gicode=A{code}"
-        res_fn = requests.get(url_fn, headers=headers, timeout=5)
-        # '목표주가' 글씨 뒤에 있는 숫자 덩어리를 무식하게 통째로 추출
-        match = re.search(r'목표주가[^\d]*([\d,]+)', res_fn.text)
-        if match:
-            val_str = match.group(1).replace(',', '').strip()
-            if val_str.isdigit() and int(val_str) > 1000:
-                target_price = val_str
-    except:
-        pass
-
-    if target_price == "N/A":
-        target_price = "적정가 탐색중"
-
-    # 💡 [가장 중요] 네이버가 공격으로 오해하지 않도록, 한 종목 검색 후 0.2초 숨고르기
-    time.sleep(0.2)
+    time.sleep(0.3) # 밴 방지용 휴식
     
     return target_price, news_status
 # =============================================================================
