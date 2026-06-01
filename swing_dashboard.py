@@ -1,24 +1,3 @@
-# === [강력 패치] 스트림릿 Python 3.14 호환성 완벽 우회 코드 ===
-import sys
-import types
-import os
-
-if 'pkg_resources' not in sys.modules:
-    # 1. 가짜 pkg_resources 모듈 생성
-    mock_pkg_resources = types.ModuleType('pkg_resources')
-    
-    # 2. 에러가 발생한 resource_filename 함수를 흉내 내는 가짜 함수 정의
-    def mock_resource_filename(package_or_requirement, resource_name):
-        # 폰트 파일 등 리소스 경로를 요구할 때, 그냥 현재 폴더의 더미 경로를 반환하여 통과시킴
-        return os.path.join(os.getcwd(), resource_name)
-    
-    # 3. 가짜 모듈 안에 가짜 함수 삽입
-    mock_pkg_resources.resource_filename = mock_resource_filename
-    
-    # 4. 시스템 모듈에 등록
-    sys.modules['pkg_resources'] = mock_pkg_resources
-# ==============================================================
-
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -26,12 +5,6 @@ import plotly.graph_objects as go
 from datetime import datetime, timedelta, timezone
 import FinanceDataReader as fdr
 import concurrent.futures
-from pykrx import stock
-
-# =============================================================================
-# [설정] 기본 셋팅
-# =============================================================================
-st.set_page_config(layout="wide", page_title="🎯 전천후 스윙 스캐너")
 
 # =============================================================================
 # [설정] 기본 셋팅
@@ -56,43 +29,41 @@ with st.expander("📖 AI 스캐너 상태값 선별 기준 및 매매 로직 (�
 KST = timezone(timedelta(hours=9))
 
 # =============================================================================
-# 1. 🚀 혁신적인 데이터 수집 함수 (pykrx + fdr 사용, 크롤링 X)
+# 1. 🚀 정면 돌파 데이터 수집 (FinanceDataReader 단독 사용)
 # =============================================================================
 @st.cache_data(ttl=300)
 def get_krx_top_universe():
-    # 1. 오늘 날짜(또는 가장 최근 평일) 기준 거래소 데이터 호출
-    today = datetime.now(KST)
-    if today.hour < 15 or today.weekday() >= 5: # 장중이거나 주말이면 어제(또는 금요일) 데이터 기준
-        target_date = (today - timedelta(days=1)).strftime('%Y%m%d')
-    else:
-        target_date = today.strftime('%Y%m%d')
-
     try:
-        # 2. pykrx로 시장 전체 종목의 거래대금, 등락률, 종가 등 핵심 정보 일괄 조회
-        df_ohlcv = stock.get_market_ohlcv(target_date, market="ALL")
-        df_marcap = stock.get_market_cap(target_date, market="ALL")
+        # 1. FDR로 한국거래소(KRX) 전체 상장 종목의 오늘자 데이터 일괄 호출
+        # (여기에 시가총액, 거래대금, 현재가, 등락률이 모두 들어있습니다!)
+        df = fdr.StockListing('KRX')
         
-        # 데이터 병합
-        full_df = pd.concat([df_ohlcv, df_marcap], axis=1)
-        full_df = full_df.reset_index()
-        full_df.rename(columns={'티커': '종목코드', '종가': '현재가', '거래량': '거래량', '거래대금': '거래대금', '등락률': '등락률', '시가총액': '시가총액'}, inplace=True)
+        # 2. 필요한 컬럼만 선택하고 이름 변경
+        df = df[['Code', 'Name', 'Close', 'ChagesRatio', 'Volume', 'Amount', 'Marcap']]
+        df.rename(columns={
+            'Code': '종목코드', 
+            'Name': '종목명', 
+            'Close': '현재가', 
+            'ChagesRatio': '등락률', 
+            'Volume': '거래량',
+            'Amount': '거래대금', 
+            'Marcap': '시가총액'
+        }, inplace=True)
         
-        # 3. 종목코드에 해당하는 종목명 매핑
-        full_df['종목명'] = full_df['종목코드'].apply(lambda x: stock.get_market_ticker_name(x))
-        
-        # 4. 필터링 로직 (ETF, 스팩 등 제외 및 가격/시총 기준 적용)
+        # 3. ETF, 스팩, 우선주 등 제외 필터링
         pattern = '|'.join(['KODEX', 'TIGER', 'KBSTAR', 'ACE', 'ARIRANG', 'HANARO', 'KOSEF', 'SOL', 'TIMEFOLIO', 'WOORI', '스팩', 'ETN', '제\d+호', '우$'])
-        full_df['종목명'] = full_df['종목명'].astype(str).fillna('')
-        full_df = full_df[~full_df['종목명'].str.contains(pattern, case=False, regex=True)]
+        df['종목명'] = df['종목명'].astype(str).fillna('')
+        df = df[~df['종목명'].str.contains(pattern, case=False, regex=True)]
         
-        full_df = full_df[full_df['현재가'] >= 10000]
-        full_df = full_df[full_df['시가총액'] >= 100000000000]
+        # 4. 가격(1만 원 이상) 및 시가총액(1천억 이상) 조건 필터링
+        df = df[df['현재가'] >= 10000]
+        df = df[df['시가총액'] >= 100000000000]
         
-        # 5. 거래대금 상위 100개 종목 추출 (이전의 top universe 100개와 동일)
-        return full_df.sort_values(by='거래대금', ascending=False).head(100).reset_index(drop=True)
+        # 5. 거래대금 상위 100개 종목 추출
+        return df.sort_values(by='거래대금', ascending=False).head(100).reset_index(drop=True)
         
     except Exception as e:
-        print(f"Error fetching data: {e}")
+        st.error(f"데이터 수집 중 오류 발생: {e}")
         return pd.DataFrame()
 
 # =============================================================================
@@ -251,4 +222,4 @@ if not universe_df.empty:
                 fig.update_layout(height=450, template="plotly_dark", margin=dict(l=0, r=40, t=20, b=0), xaxis=dict(rangeslider=dict(visible=False), type='category'))
                 st.plotly_chart(fig, use_container_width=True)
 else:
-    st.error("데이터를 수집하지 못했습니다. 라이브러리(pykrx, FinanceDataReader) 설치 상태를 확인해주세요.")
+    st.error("데이터 수집을 실패했습니다.")
