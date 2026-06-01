@@ -65,6 +65,8 @@ def get_naver_top_universe():
     full_df['등락률'] = pd.to_numeric(full_df['등락률'].astype(str).str.replace('%', ''), errors='coerce')
     
     pattern = '|'.join(['KODEX', 'TIGER', 'KBSTAR', 'ACE', 'ARIRANG', 'HANARO', 'KOSEF', 'SOL', 'TIMEFOLIO', 'WOORI', '스팩', 'ETN', '제\d+호', '우$'])
+    # 💡 [필수 추가] '종목명' 컬럼을 안전하게 강제 문자열로 변환하고 결측치를 처리합니다.
+    full_df['종목명'] = full_df['종목명'].astype(str).fillna('')
     full_df = full_df[~full_df['종목명'].str.contains(pattern, case=False, regex=True)]
     
     full_df = full_df[full_df['현재가'] >= 10000]
@@ -233,3 +235,4 @@ if not universe_df.empty:
                 st.plotly_chart(fig, use_container_width=True)
 else:
     st.error("데이터를 수집하지 못했습니다. 네이버 금융 연결 상태를 확인해주세요.")
+
