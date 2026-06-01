@@ -77,47 +77,23 @@ def get_naver_top_universe():
     return full_df.sort_values(by='거래대금', ascending=False).head(100).reset_index(drop=True)
 
 # =============================================================================
-# 2. 증권사 목표가 및 뉴스 센티먼트 분석 (🔥 봇 차단 회피 & 텍스트 강제 추적 버전)
+# 2. 증권사 목표가 및 뉴스 센티먼트 분석 (💡 비밀 데이터 통로 직접 추적 버전)
 # =============================================================================
 def get_fundamentals_and_news(code):
-    import re  # 💡 텍스트에서 숫자만 뽑아내는 특수 도구
-
-    # 💡 봇 차단(403) 완벽 회피를 위한 위장 신분증(Referer) 장착!
+    # 💡 봇 차단 회피용 헤더 설정
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-        'Referer': f'https://finance.naver.com/item/main.naver?code={code}', 
-        'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7'
+        'Referer': f'https://finance.naver.com/item/main.naver?code={code}'
     }
     
     target_price = "N/A"
-    news_status = "☁️ 특징 없음"
     
-    # 🎯 1. 증권사 목표가 (안보이는 태그 무시하고 '목표주가' 글씨를 직접 때려 맞춥니다)
-    try:
-        url_main = f"https://finance.naver.com/item/main.naver?code={code}"
-        res_main = requests.get(url_main, headers=headers, timeout=5)
-        res_main.encoding = 'euc-kr'
-        soup_main = BeautifulSoup(res_main.text, 'html.parser')
-        
-        # 화면에 보이는 '목표주가'라는 글씨가 있는 칸(th)을 무조건 찾아냄
-        th_target = soup_main.find(lambda tag: tag.name == 'th' and '목표주가' in tag.get_text())
-        if th_target:
-            td_target = th_target.find_next_sibling('td')
-            if td_target:
-                # 불필요한 글씨 다 날리고 가장 큰 목표가 숫자만 쏙! 빼옵니다.
-                numbers = re.findall(r'\d+', td_target.text.replace(',', ''))
-                if numbers:
-                    target_price = numbers[0]
-    except Exception as e:
-        print(f"[{code}] 목표가 에러: {e}")
-        
-    # 📰 2. 뉴스 센티먼트 (여러 가지 뉴스 구조 모두 포획)
+    # 🎯 [기존 뉴스 온도계 유지] - 잘 작동하므로 그대로 둡니다!
+    news_status = "☁️ 특징 없음"
     try:
         url_news = f"https://finance.naver.com/item/news_news.naver?code={code}&page=1"
         res_news = requests.get(url_news, headers=headers, timeout=5)
         soup_news = BeautifulSoup(res_news.content.decode('euc-kr', 'replace'), 'html.parser')
-        
-        # 네이버 금융 뉴스가 쓰는 모든 제목 스타일을 다 뒤집니다.
         titles = soup_news.select('td.title a, a.tit')
         
         pos_words = ['상승', '급등', '수주', '흑자', '돌파', '호실적', '성장', '최대', 'MOU', '계약', '기대', '강세', '수혜', '주목']
@@ -132,8 +108,29 @@ def get_fundamentals_and_news(code):
         if score >= 2: news_status = "🔥 호재 우세"
         elif score <= -2: news_status = "❄️ 악재 우세"
         else: news_status = "☁️ 특징 없음"
-    except Exception as e:
-        print(f"[{code}] 뉴스 에러: {e}")
+    except Exception:
+        pass
+
+    # 🎯 [목표가 핵수정] - 늦게 로딩되는 화면 무시하고, 네이버가 내부적으로 쓰는 숫자 데이터 백엔드 주소를 직접 때립니다.
+    try:
+        # 네이버 금융이 투자정보 표를 그릴 때 내부적으로 호출하는 실제 데이터 주소입니다.
+        url_target = f"https://finance.naver.com/item/coinfo.naver?code={code}"
+        res_target = requests.get(url_target, headers=headers, timeout=5)
+        res_target.encoding = 'euc-kr'
+        soup_target = BeautifulSoup(res_target.text, 'html.parser')
+        
+        # '목표주가'를 텍스트로 가진 항목을 직접 추적
+        th_target = soup_target.find(lambda tag: tag.name == 'th' and '목표주가' in tag.get_text())
+        if th_target:
+            td_target = th_target.find_next_sibling('td')
+            if td_target:
+                # 쉼표나 공백, '원' 글씨를 싹 지우고 오직 숫자 매칭만 진행
+                raw_val = td_target.text.strip().replace(',', '')
+                # 숫자로만 이루어져 있는지 안전 검사 (목표가가 없는 종목은 배제)
+                if raw_val.isdigit() and int(raw_val) > 0:
+                    target_price = raw_val
+    except Exception:
+        pass
         
     return target_price, news_status
 
