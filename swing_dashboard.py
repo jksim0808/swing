@@ -77,44 +77,61 @@ def get_naver_top_universe():
     return full_df.sort_values(by='거래대금', ascending=False).head(100).reset_index(drop=True)
 
 # =============================================================================
-# 2. 증권사 목표가 및 뉴스 센티먼트 분석 (🕵️‍♂️ 에러 원인 정밀 진단 버전)
+# 2. 증권사 목표가 및 뉴스 센티먼트 분석 (✨ FnGuide 정밀 타격 완결판)
 # =============================================================================
 def get_fundamentals_and_news(code):
     import time
+    import re
 
-    target_price = "진단중..."
+    target_price = "리포트 없음"
     news_status = "☁️ 특징 없음"
     
-    # 다음 금융 API로 접속 테스트
-    headers_daum = {
+    headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
-        'Referer': 'https://finance.daum.net/'
     }
     
+    # 📰 1. 뉴스 (네이버 모바일 API - 차단 없음)
     try:
-        url = f"https://finance.daum.net/api/sectors/stock/A{code}"
-        res = requests.get(url, headers=headers_daum, timeout=3)
-        
-        # 💡 상태 코드(Status Code)를 직접 확인합니다.
-        if res.status_code == 403:
-            target_price = "⛔ 403: IP 영구차단"
-        elif res.status_code == 200:
-            data = res.json()
-            raw = data.get('wicsReport', {}).get('targetPrice') or data.get('targetPrice')
-            
-            if raw and str(raw).isdigit() and int(raw) > 0:
-                target_price = str(raw)
-            else:
-                target_price = "리포트 없음"
-        else:
-            target_price = f"오류({res.status_code})"
-            
-    except requests.exceptions.Timeout:
-        target_price = "⏳ 접속 지연"
-    except Exception as e:
-        target_price = "접속 실패"
+        url_news = f"https://m.stock.naver.com/api/news/stock/{code}?pageSize=10"
+        res_news = requests.get(url_news, headers=headers, timeout=3)
+        if res_news.status_code == 200:
+            pos_words = ['상승', '급등', '수주', '흑자', '돌파', '호실적', '성장', '최대', 'MOU', '계약', '기대', '강세', '수혜']
+            neg_words = ['하락', '급락', '적자', '우려', '매도', '악재', '위기', '감소', '부진', '소송', '폭락', '약세']
+            score = 0
+            for news in res_news.json():
+                title = news.get('tit', '')
+                if any(w in title for w in pos_words): score += 1
+                if any(w in title for w in neg_words): score -= 1
+            if score >= 2: news_status = "🔥 호재 우세"
+            elif score <= -2: news_status = "❄️ 악재 우세"
+    except:
+        pass
 
-    time.sleep(0.3) # 밴 방지용 휴식
+    # 🎯 2. 목표가 (FnGuide 서버 렌더링 원본 HTML 정밀 파싱)
+    try:
+        # 에프앤가이드 기업 스냅샷 정식 주소
+        url_fn = f"https://comp.fnguide.com/SVO2/ASP/SVD_Main.asp?pGB=1&gicode=A{code}"
+        res_fn = requests.get(url_fn, headers=headers, timeout=3)
+        
+        if res_fn.status_code == 200:
+            soup = BeautifulSoup(res_fn.text, 'html.parser')
+            # <th> 태그 중 '목표주가' 글씨가 있는 칸을 정확히 찾아서 그 옆 <td>의 숫자를 뜯어옵니다.
+            th_tags = soup.find_all('th')
+            for th in th_tags:
+                if '목표주가' in th.get_text():
+                    td = th.find_next_sibling('td')
+                    if td:
+                        # 텍스트 안에서 불필요한 공백, 쉼표 다 버리고 숫자만 추출
+                        val = re.sub(r'[^\d]', '', td.get_text())
+                        if val and int(val) > 1000:
+                            target_price = val
+                        break
+        else:
+            target_price = f"오류({res_fn.status_code})"
+    except Exception:
+        target_price = "조회 실패"
+
+    time.sleep(0.1) # 과부하 방지용 0.1초 휴식
     
     return target_price, news_status
 # =============================================================================
