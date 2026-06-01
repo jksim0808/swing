@@ -79,7 +79,7 @@ def get_naver_top_universe():
     return full_df.sort_values(by='거래대금', ascending=False).head(100).reset_index(drop=True)
 
 # =============================================================================
-# 2. 증권사 목표가 및 뉴스 센티먼트 분석 (✨ 대형주 완벽 핀셋 픽업!)
+# 2. 증권사 목표가 및 뉴스 센티먼트 분석 (✨ 엉뚱한 표 함정 완벽 회피 버전!)
 # =============================================================================
 def get_fundamentals_and_news(code):
     import time
@@ -118,33 +118,32 @@ def get_fundamentals_and_news(code):
     except:
         news_headlines = "- 뉴스 로딩 실패"
 
-    # 🎯 2. 목표가 (네이버 금융 우측 '투자정보' 표 핀셋 타격)
+    # 🎯 2. 목표가 (엉뚱한 표에 속지 않고 모든 '목표주가' 칸을 싹 다 스캔합니다!)
     try:
         url_main = f"https://finance.naver.com/item/main.naver?code={code}"
         res_main = requests.get(url_main, headers=headers, timeout=3)
-        res_main.encoding = 'euc-kr' # 한글 깨짐 방지
+        res_main.encoding = 'euc-kr' 
         soup = BeautifulSoup(res_main.text, 'html.parser')
         
-        # '목표주가'라는 단어가 포함된 th 태그를 정확히 찾습니다.
-        th_tag = soup.find(lambda tag: tag.name == 'th' and '목표주가' in tag.get_text())
-        if th_tag:
-            # 그 바로 옆에 있는 td 태그를 가져옵니다.
-            td_tag = th_tag.find_next_sibling('td')
+        # 💡 [핵심 수정] find_all을 써서 네이버 금융 화면의 '목표주가' 칸을 모두 다 찾아냅니다.
+        th_tags = soup.find_all(lambda tag: tag.name == 'th' and '목표주가' in tag.get_text())
+        
+        for th in th_tags:
+            td_tag = th.find_next_sibling('td')
             if td_tag:
-                # td 안의 첫 번째 em 태그에 목표가가 들어있습니다. (목표가가 없는 종목은 N/A로 적혀있음)
                 em_tag = td_tag.find('em')
                 if em_tag:
                     val = em_tag.text.replace(',', '').strip()
-                    # 숫자인지 확인합니다. N/A면 무시하고 '리포트 없음' 유지!
+                    # 빈칸이나 N/A에 속지 않고, 제대로 된 숫자가 나올 때만 채워 넣고 즉시 탐색을 종료합니다!
                     if val.isdigit() and int(val) > 0:
                         target_price = val
+                        break 
     except Exception:
         pass
 
     time.sleep(0.1) 
     
     return target_price, news_status, news_headlines
-
 # =============================================================================
 # 3. 일봉 분석 알고리즘 (초대형주 예외 로직)
 # =============================================================================
