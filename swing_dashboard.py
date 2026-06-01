@@ -230,7 +230,7 @@ if not universe_df.empty:
         top_30_df = pd.DataFrame(results).sort_values(by="점수", ascending=False).head(30).reset_index(drop=True)
         display_df = top_30_df.copy()
         
-def format_target(x):
+        def format_target(x):
             # 💡 에러 메시지("403 차단" 등)를 '정보 없음'으로 가리지 않고 그대로 노출시킵니다!
             if str(x).isdigit(): return f"{int(x):,} 원"
             return str(x) 
