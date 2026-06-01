@@ -79,10 +79,11 @@ def get_naver_top_universe():
     return full_df.sort_values(by='거래대금', ascending=False).head(100).reset_index(drop=True)
 
 # =============================================================================
-# 2. 증권사 목표가 및 뉴스 센티먼트 분석 (✨ 엉뚱한 표 함정 완벽 회피 버전!)
+# 2. 증권사 목표가 및 뉴스 센티먼트 분석 (🔥 진짜 최종 종결. 쥐구멍 탈출용 버전)
 # =============================================================================
 def get_fundamentals_and_news(code):
     import time
+    import re
     from bs4 import BeautifulSoup
     import requests
 
@@ -94,14 +95,13 @@ def get_fundamentals_and_news(code):
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
     }
     
-    # 📰 1. 뉴스 (네이버 모바일 API)
+    # 📰 1. 뉴스 (네이버 모바일 API - 완벽 작동 중)
     try:
         url_news = f"https://m.stock.naver.com/api/news/stock/{code}?pageSize=10"
         res_news = requests.get(url_news, headers=headers, timeout=3)
         if res_news.status_code == 200:
             news_items = res_news.json()
             
-            # 🔥 뉴스 제목 3개 추출
             for news in news_items[:3]:
                 title = news.get('tit', '')
                 news_headlines += f"- {title}\n"
@@ -118,26 +118,26 @@ def get_fundamentals_and_news(code):
     except:
         news_headlines = "- 뉴스 로딩 실패"
 
-    # 🎯 2. 목표가 (엉뚱한 표에 속지 않고 모든 '목표주가' 칸을 싹 다 스캔합니다!)
+    # 🎯 2. 목표가 (FnGuide 표의 칸(Cell)을 직접 뒤져서 숫자만 뜯어옵니다)
     try:
-        url_main = f"https://finance.naver.com/item/main.naver?code={code}"
-        res_main = requests.get(url_main, headers=headers, timeout=3)
-        res_main.encoding = 'euc-kr' 
-        soup = BeautifulSoup(res_main.text, 'html.parser')
+        url_fn = f"https://comp.fnguide.com/SVO2/ASP/SVD_Main.asp?pGB=1&gicode=A{code}"
+        res_fn = requests.get(url_fn, headers=headers, timeout=3)
         
-        # 💡 [핵심 수정] find_all을 써서 네이버 금융 화면의 '목표주가' 칸을 모두 다 찾아냅니다.
-        th_tags = soup.find_all(lambda tag: tag.name == 'th' and '목표주가' in tag.get_text())
-        
-        for th in th_tags:
-            td_tag = th.find_next_sibling('td')
-            if td_tag:
-                em_tag = td_tag.find('em')
-                if em_tag:
-                    val = em_tag.text.replace(',', '').strip()
-                    # 빈칸이나 N/A에 속지 않고, 제대로 된 숫자가 나올 때만 채워 넣고 즉시 탐색을 종료합니다!
-                    if val.isdigit() and int(val) > 0:
-                        target_price = val
-                        break 
+        if res_fn.status_code == 200:
+            soup = BeautifulSoup(res_fn.text, 'html.parser')
+            
+            # '목표주가' 글씨가 적힌 표의 헤더(th)를 모두 찾습니다.
+            for th in soup.find_all('th'):
+                if '목표주가' in th.get_text():
+                    # 바로 옆 데이터 칸(td)을 엽니다.
+                    td = th.find_next_sibling('td')
+                    if td:
+                        # 칸 안에 EPS, PER 등 여러 숫자가 줄바꿈되어 섞여 있어도,
+                        # 4자리 이상의 숫자(예: 15,000)를 모두 찾아내면 첫 번째 큰 숫자가 무조건 목표가입니다!
+                        numbers = re.findall(r'[1-9][\d,]{3,}', td.get_text(separator=' '))
+                        if numbers:
+                            target_price = numbers[0].replace(',', '')
+                            break # 숫자를 찾았으면 즉시 루프 탈출!
     except Exception:
         pass
 
