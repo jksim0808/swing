@@ -77,38 +77,51 @@ def get_naver_top_universe():
     return full_df.sort_values(by='거래대금', ascending=False).head(100).reset_index(drop=True)
 
 # =============================================================================
-# 2. 증권사 목표가 및 뉴스 센티먼트 분석 (💡 독립적 예외처리로 에러 방어력 강화!)
+# 2. 증권사 목표가 및 뉴스 센티먼트 분석 (🔥 봇 차단 회피 & 텍스트 강제 추적 버전)
 # =============================================================================
 def get_fundamentals_and_news(code):
+    import re  # 💡 텍스트에서 숫자만 뽑아내는 특수 도구
+
+    # 💡 봇 차단(403) 완벽 회피를 위한 위장 신분증(Referer) 장착!
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        'Referer': f'https://finance.naver.com/item/main.naver?code={code}', 
+        'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7'
     }
     
     target_price = "N/A"
     news_status = "☁️ 특징 없음"
     
-    # 🎯 1. 증권사 목표가 전용 블록 (여기서 에러가 나도 뉴스는 수집하러 갑니다!)
+    # 🎯 1. 증권사 목표가 (안보이는 태그 무시하고 '목표주가' 글씨를 직접 때려 맞춥니다)
     try:
         url_main = f"https://finance.naver.com/item/main.naver?code={code}"
         res_main = requests.get(url_main, headers=headers, timeout=5)
-        res_main.encoding = 'euc-kr'  # 💡 네이버 금융 한글 깨짐 완벽 방지
+        res_main.encoding = 'euc-kr'
         soup_main = BeautifulSoup(res_main.text, 'html.parser')
         
-        cns_eps = soup_main.select_one('#_step_bank_cns')
-        if cns_eps:
-            target_price = cns_eps.text.strip().replace(',', '')
-    except Exception:
-        pass  # 목표가를 못 찾으면 쿨하게 넘어가고 뉴스 수집으로 이동
+        # 화면에 보이는 '목표주가'라는 글씨가 있는 칸(th)을 무조건 찾아냄
+        th_target = soup_main.find(lambda tag: tag.name == 'th' and '목표주가' in tag.get_text())
+        if th_target:
+            td_target = th_target.find_next_sibling('td')
+            if td_target:
+                # 불필요한 글씨 다 날리고 가장 큰 목표가 숫자만 쏙! 빼옵니다.
+                numbers = re.findall(r'\d+', td_target.text.replace(',', ''))
+                if numbers:
+                    target_price = numbers[0]
+    except Exception as e:
+        print(f"[{code}] 목표가 에러: {e}")
         
-    # 📰 2. 뉴스 센티먼트 전용 블록
+    # 📰 2. 뉴스 센티먼트 (여러 가지 뉴스 구조 모두 포획)
     try:
         url_news = f"https://finance.naver.com/item/news_news.naver?code={code}&page=1"
         res_news = requests.get(url_news, headers=headers, timeout=5)
         soup_news = BeautifulSoup(res_news.content.decode('euc-kr', 'replace'), 'html.parser')
         
-        titles = soup_news.select('.title a')
-        pos_words = ['상승', '급등', '수주', '흑자', '돌파', '호실적', '성장', '최대', 'MOU', '계약', '기대', '강세', '수혜']
-        neg_words = ['하락', '급락', '적자', '우려', '매도', '악재', '위기', '감소', '부진', '소송', '폭락', '약세', '쇼크']
+        # 네이버 금융 뉴스가 쓰는 모든 제목 스타일을 다 뒤집니다.
+        titles = soup_news.select('td.title a, a.tit')
+        
+        pos_words = ['상승', '급등', '수주', '흑자', '돌파', '호실적', '성장', '최대', 'MOU', '계약', '기대', '강세', '수혜', '주목']
+        neg_words = ['하락', '급락', '적자', '우려', '매도', '악재', '위기', '감소', '부진', '소송', '폭락', '약세', '쇼크', '주의']
         
         score = 0
         for title in titles[:10]:
@@ -119,8 +132,8 @@ def get_fundamentals_and_news(code):
         if score >= 2: news_status = "🔥 호재 우세"
         elif score <= -2: news_status = "❄️ 악재 우세"
         else: news_status = "☁️ 특징 없음"
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[{code}] 뉴스 에러: {e}")
         
     return target_price, news_status
 
